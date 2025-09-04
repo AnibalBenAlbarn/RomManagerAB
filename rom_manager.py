@@ -1,7 +1,13 @@
 """Entry point for the ROM Manager application."""
-from database import Database
-from download_manager import DownloadItem, DownloadManager, DownloadTask
-from ui_main import MainWindow
+
+try:  # pragma: no cover - import fallback logic
+    from .database import Database
+    from .download_manager import DownloadItem, DownloadManager, DownloadTask
+    from .ui_main import MainWindow
+except ImportError:  # pragma: no cover - support running as a script
+    from database import Database
+    from download_manager import DownloadItem, DownloadManager, DownloadTask
+    from ui_main import MainWindow
 
 
 def main() -> None:
