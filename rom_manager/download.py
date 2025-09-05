@@ -248,13 +248,21 @@ class DownloadManager(QObject):
             item in self._active,
             item in self._queue,
         )
-        # Cancelar si se encuentra activo
-        if item in self._active and item.task:
-            logging.debug("Cancelling active task for %s", item.name)
+
+        # Cancelar y retirar de activos si está en ejecución
+        if item in self._active:
+            logging.debug("Item %s is active; cancelling and removing from active list", item.name)
+            if item.task:
+                try:
+                    item.task.cancel()
+                except Exception:
+                    logging.exception("Error cancelling task for %s", item.name)
             try:
-                item.task.cancel()
+                self._active.remove(item)
             except Exception:
-                logging.exception("Error cancelling task for %s", item.name)
+                logging.exception("Error removing %s from active list", item.name)
+        # Quitar de la cola si todavía estaba en espera
+
         if item in self._queue:
             logging.debug("Removing %s from queue", item.name)
             try:
