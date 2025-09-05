@@ -49,6 +49,9 @@ class MainWindow(QMainWindow):
         self.model = LinksTableModel([])
         self.manager = DownloadManager(self.pool, 3)
         self.manager.queue_changed.connect(self._refresh_downloads_table)
+        # Seguir descargas en segundo plano
+        self.manager.queue_changed.connect(self._check_background_downloads)
+        self.background_downloads: bool = False
         self.items: List[DownloadItem] = []
 
         # Cesta de descargas (agrupa ROMs) y estructura de búsqueda
@@ -85,6 +88,9 @@ class MainWindow(QMainWindow):
                 self._connect_db()
             except Exception:
                 pass
+        # Advertir si no hay base de datos configurada
+        if not self.db:
+            self._prompt_db_missing()
         # Cargar cesta guardada después de conectar BD
         if getattr(self, '_saved_basket_json', None) and self.db:
             try:
@@ -260,6 +266,23 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.table_dl)
 
     # --- Acciones UI ---
+    def _prompt_db_missing(self) -> None:
+        """Muestra advertencia y permite elegir una base de datos si no está configurada."""
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Icon.Warning)
+        msg.setWindowTitle("BD no configurada")
+        msg.setText("No se ha configurado ninguna base de datos. ¿Deseas seleccionarla ahora?")
+        btn_browse = msg.addButton("Explorar…", QMessageBox.ButtonRole.AcceptRole)
+        msg.addButton(QMessageBox.StandardButton.Cancel)
+        msg.exec()
+        if msg.clickedButton() == btn_browse:
+            self._choose_db()
+            if self.le_db.text().strip():
+                try:
+                    self._connect_db()
+                except Exception:
+                    pass
+
     def _choose_db(self) -> None:
         """Diálogo para seleccionar la base de datos SQLite."""
         fn, _ = QFileDialog.getOpenFileName(self, "Selecciona BD SQLite", "",
@@ -915,6 +938,16 @@ class MainWindow(QMainWindow):
     def _refresh_downloads_table(self) -> None:
         """Este slot se puede usar para actualizar contadores globales si fuera necesario."""
         pass
+
+    def _check_background_downloads(self) -> None:
+        """Cierra la aplicación cuando las descargas en segundo plano finalizan."""
+        if self.background_downloads and not self.manager._active and not self.manager._queue:
+            try:
+                self._save_session_silent()
+                self._save_config()
+            except Exception:
+                pass
+            QApplication.instance().quit()
 
     # --- Persistencia de sesión (Ajustes de descarga) ---
     def _session_path(self) -> str:
@@ -1623,7 +1656,25 @@ class MainWindow(QMainWindow):
 
     # --- Evento de cierre ---
     def closeEvent(self, event) -> None:
-        """Sobrecarga para guardar configuración, cesta y sesión automáticamente al cerrar."""
+        """Pregunta al usuario si desea salir cuando hay descargas activas."""
+        if self.manager._active or self.manager._queue:
+            box = QMessageBox(self)
+            box.setWindowTitle("Descargas en curso")
+            box.setText("Hay descargas en curso. ¿Quieres salir?")
+            box.setIcon(QMessageBox.Icon.Warning)
+            box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            chk = QCheckBox("Seguir descargando en segundo plano")
+            box.setCheckBox(chk)
+            resp = box.exec()
+            if resp == QMessageBox.StandardButton.Yes:
+                if chk.isChecked():
+                    self.background_downloads = True
+                    self.hide()
+                    event.ignore()
+                    return
+            else:
+                event.ignore()
+                return
         try:
             # Guardar sesión y configuración de manera silenciosa
             self._save_session_silent()
