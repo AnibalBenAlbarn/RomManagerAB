@@ -173,6 +173,8 @@ class DownloadTask(QRunnable):
                 chunk_size = 1024 * 512
                 last_t = time.time()
                 last_b = downloaded
+                last_speed = 0.0
+                last_eta = math.inf
 
                 # Abrir archivo .part y escribir conforme se reciben datos
                 with open(part_path, 'ab' if downloaded > 0 else 'wb') as f:
@@ -191,17 +193,17 @@ class DownloadTask(QRunnable):
                         # Calcular velocidad y ETA cada ~0.5 segundos
                         now = time.time()
                         dt = now - last_t
-                        speed = 0.0
-                        eta = math.inf
                         if dt >= 0.5:
                             delta = downloaded - last_b
-                            speed = delta / dt
+                            last_speed = delta / dt
                             last_t = now
                             last_b = downloaded
-                            if total and downloaded <= total and speed > 0:
-                                eta = (total - downloaded) / speed
+                            if total and downloaded <= total and last_speed > 0:
+                                last_eta = (total - downloaded) / last_speed
                         # Emitir progreso
-                        self.signals.progress.emit(downloaded, total, float(speed), float(eta), 'Descargando')
+                        self.signals.progress.emit(
+                            downloaded, total, float(last_speed), float(last_eta), 'Descargando'
+                        )
 
             # Renombrar el archivo descargado correctamente
             if os.path.exists(final_path):
