@@ -1,0 +1,131 @@
+"""
+Módulo para el acceso a la base de datos SQLite.
+
+La clase Database encapsula la conexión y las consultas necesarias
+para cargar filtros y buscar enlaces de descarga. Al separar esta
+implementación en un módulo dedicado, se mejora la legibilidad del
+código principal de la aplicación y se favorece la reutilización.
+"""
+
+import os
+import sqlite3
+from typing import Optional, List, Tuple
+
+
+class Database:
+    """
+    Manejador de conexión SQLite para cargar filtros y buscar enlaces de descarga.
+    Se ha extraído a un módulo separado para mejorar la legibilidad y modularidad.
+    """
+
+    def __init__(self, db_path: str):
+        self.db_path = db_path
+        self.conn: Optional[sqlite3.Connection] = None
+
+    def connect(self) -> None:
+        """
+        Abre la conexión a la base de datos si existe.
+        """
+        if not os.path.exists(self.db_path):
+            raise FileNotFoundError(f"No existe la BD: {self.db_path}")
+        self.conn = sqlite3.connect(self.db_path)
+        # Devolver filas como diccionarios para un acceso más cómodo en la UI
+        self.conn.row_factory = sqlite3.Row
+
+    def close(self) -> None:
+        """
+        Cierra la conexión a la base de datos.
+        """
+        if self.conn:
+            self.conn.close()
+            self.conn = None
+
+    def get_systems(self) -> List[Tuple[Optional[int], str]]:
+        """
+        Devuelve la lista de sistemas disponibles para el filtro.
+        El primer elemento de la lista corresponde a "Todos" (sin filtro).
+        """
+        assert self.conn
+        cur = self.conn.execute("SELECT id, name FROM systems ORDER BY name")
+        return [(None, "Todos")] + [(r[0], r[1]) for r in cur.fetchall()]
+
+    def get_languages(self) -> List[Tuple[Optional[int], str]]:
+        """
+        Devuelve la lista de idiomas disponibles para el filtro.
+        El primer elemento de la lista corresponde a "Todos" (sin filtro).
+        """
+        assert self.conn
+        cur = self.conn.execute("SELECT id, code FROM languages ORDER BY code")
+        return [(None, "Todos")] + [(r[0], r[1]) for r in cur.fetchall()]
+
+    def get_formats(self) -> List[str]:
+        """
+        Devuelve la lista de formatos de archivo distintos disponibles.
+        La primera opción es "Todos" para indicar que no se aplica filtro.
+        """
+        assert self.conn
+        cur = self.conn.execute(
+            "SELECT DISTINCT fmt FROM links WHERE fmt IS NOT NULL AND TRIM(fmt)<>'' ORDER BY fmt"
+        )
+        return ["Todos"] + [r[0] for r in cur.fetchall()]
+
+    def search_links(
+        self,
+        text: str = "",
+        system_id: Optional[int] = None,
+        language_id: Optional[int] = None,
+        fmt: Optional[str] = None,
+        limit: int = 1000,
+    ) -> List[sqlite3.Row]:
+        """
+        Realiza una búsqueda de enlaces según el texto y filtros.
+        Devuelve filas con información de ROM y link.
+
+        :param text: Texto de búsqueda para coincidir con nombre de ROM, etiqueta o servidor.
+        :param system_id: Identificador del sistema seleccionado (None para todos).
+        :param language_id: Identificador del idioma seleccionado (None para todos).
+        :param fmt: Formato de archivo seleccionado (None o "Todos" para todos).
+        :param limit: Máximo número de resultados a devolver.
+        :return: Lista de filas con información relevante para cada enlace de descarga.
+        """
+        assert self.conn
+        params: List = []
+        where = ["1=1"]
+        if text:
+            where.append("(roms.name LIKE ? OR links.label LIKE ? OR links.server_name LIKE ?)")
+            like = f"%{text}%"
+            params += [like, like, like]
+        if system_id is not None:
+            where.append("roms.system_id = ?")
+            params.append(system_id)
+        if language_id is not None:
+            where.append(
+                "EXISTS (SELECT 1 FROM link_languages ll WHERE ll.link_id = links.id AND ll.language_id = ?)"
+            )
+            params.append(language_id)
+        if fmt is not None and fmt != "Todos":
+            where.append("links.fmt = ?")
+            params.append(fmt)
+        sql = f"""
+        SELECT
+            links.id            AS link_id,
+            roms.id             AS rom_id,
+            roms.name           AS rom_name,
+            links.server_name   AS server,
+            links.fmt           AS fmt,
+            links.size          AS size,
+            COALESCE(GROUP_CONCAT(languages.code, ','), links.languages) AS langs,
+            links.url           AS url,
+            links.label         AS label
+        FROM links
+        JOIN roms    ON roms.id = links.rom_id
+        LEFT JOIN link_languages ON link_languages.link_id = links.id
+        LEFT JOIN languages      ON languages.id = link_languages.language_id
+        WHERE {" AND ".join(where)}
+        GROUP BY links.id
+        ORDER BY roms.name, links.id
+        LIMIT ?
+        """
+        params.append(limit)
+        cur = self.conn.execute(sql, params)
+        return cur.fetchall()
