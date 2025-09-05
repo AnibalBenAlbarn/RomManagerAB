@@ -21,6 +21,8 @@ class Database:
     def __init__(self, db_path: str):
         self.db_path = db_path
         self.conn: Optional[sqlite3.Connection] = None
+        # Indica si la tabla 'links' contiene la columna opcional 'hash'
+        self._has_links_hash = False
 
     def connect(self) -> None:
         """
@@ -31,6 +33,9 @@ class Database:
         self.conn = sqlite3.connect(self.db_path)
         # Devolver filas como diccionarios para un acceso más cómodo en la UI
         self.conn.row_factory = sqlite3.Row
+        # Detectar columnas disponibles en la tabla 'links'
+        cur = self.conn.execute("PRAGMA table_info(links)")
+        self._has_links_hash = any(r[1] == "hash" for r in cur.fetchall())
 
     def close(self) -> None:
         """
@@ -106,6 +111,11 @@ class Database:
         if fmt is not None and fmt != "Todos":
             where.append("links.fmt = ?")
             params.append(fmt)
+        hash_select = (
+            "links.hash          AS hash,"
+            if self._has_links_hash
+            else "NULL               AS hash,"
+        )
         sql = f"""
         SELECT
             links.id            AS link_id,
@@ -114,7 +124,7 @@ class Database:
             links.server_name   AS server,
             links.fmt           AS fmt,
             links.size          AS size,
-            links.hash          AS hash,
+            {hash_select}
             COALESCE(GROUP_CONCAT(languages.code, ','), links.languages) AS langs,
             links.url           AS url,
             links.label         AS label
