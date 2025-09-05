@@ -114,6 +114,7 @@ class Database:
             links.server_name   AS server,
             links.fmt           AS fmt,
             links.size          AS size,
+            links.hash          AS hash,
             COALESCE(GROUP_CONCAT(languages.code, ','), links.languages) AS langs,
             links.url           AS url,
             links.label         AS label

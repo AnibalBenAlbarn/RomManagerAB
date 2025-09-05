@@ -10,6 +10,7 @@ import os
 import time
 import math
 import threading
+import hashlib
 from typing import Optional, List
 from dataclasses import dataclass
 
@@ -37,11 +38,12 @@ class DownloadTask(QRunnable):
     reanudación mediante el uso de archivos ``.part`` y la cabecera Range.
     """
 
-    def __init__(self, url: str, dest_dir: str, file_name: str, headers: Optional[dict] = None) -> None:
+    def __init__(self, url: str, dest_dir: str, file_name: str, headers: Optional[dict] = None, expected_hash: Optional[str] = None) -> None:
         super().__init__()
         self.url = url
         self.dest_dir = dest_dir
         self.file_name = file_name
+        self.expected_hash = expected_hash
         # Cabeceras “de navegador” por defecto
         self.headers = headers or {
             "User-Agent": (
@@ -79,6 +81,19 @@ class DownloadTask(QRunnable):
         """
         self._cancel = True
         self._pause.set()
+
+    @staticmethod
+    def _detect_algorithm(expected: str) -> str:
+        length = len(expected)
+        return {32: "md5", 40: "sha1", 64: "sha256"}.get(length, "sha256")
+
+    @staticmethod
+    def _file_hash(path: str, algo: str) -> str:
+        h = hashlib.new(algo)
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(8192), b""):
+                h.update(chunk)
+        return h.hexdigest()
 
     def run(self) -> None:
         """
@@ -195,8 +210,16 @@ class DownloadTask(QRunnable):
                 except Exception:
                     pass
             os.replace(part_path, final_path)
+            status = 'Completado'
+            if self.expected_hash:
+                try:
+                    algo = self._detect_algorithm(self.expected_hash)
+                    calc = self._file_hash(final_path, algo)
+                    status = 'Integridad OK' if calc.lower() == self.expected_hash.lower() else 'Integridad KO'
+                except Exception:
+                    status = 'Integridad KO'
             # Señalar finalización
-            self.signals.progress.emit(downloaded, total, 0.0, 0.0, 'Completado')
+            self.signals.progress.emit(downloaded, total, 0.0, 0.0, status)
             self.signals.finished_ok.emit(final_path)
         except Exception as e:
             # Notificar fallo
@@ -212,6 +235,7 @@ class DownloadItem:
     name: str
     url: str
     dest_dir: str
+    expected_hash: Optional[str] = None
     task: Optional[DownloadTask] = None
     row: Optional[int] = None
 
@@ -277,7 +301,7 @@ class DownloadManager(QObject):
 
     def _start(self, it: DownloadItem) -> None:
         # Crea un DownloadTask y conecta sus señales
-        task = DownloadTask(it.url, it.dest_dir, it.name)
+        task = DownloadTask(it.url, it.dest_dir, it.name, expected_hash=it.expected_hash)
         it.task = task
         task.signals.finished_ok.connect(lambda path, i=it: self._on_done(i, True, path))
         task.signals.failed.connect(lambda msg, i=it: self._on_done(i, False, msg))

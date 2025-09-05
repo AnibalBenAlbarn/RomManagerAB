@@ -385,7 +385,8 @@ class MainWindow(QMainWindow):
             r = self.model.getRow(idx.row())
             base = r["label"] or r["rom_name"] or os.path.basename(r["url"]) or "archivo.bin"
             name = safe_filename(base)
-            item = DownloadItem(name=name, url=r["url"], dest_dir=save_dir)
+            expected_hash = r["hash"] if "hash" in r.keys() else None
+            item = DownloadItem(name=name, url=r["url"], dest_dir=save_dir, expected_hash=expected_hash)
             # Preparar un diccionario para mostrar el nombre de la ROM en la tabla
             row_data = {
                 'server': r['server'] or '',
@@ -522,8 +523,13 @@ class MainWindow(QMainWindow):
         # Verificar que la fila sea válida antes de actualizar
         if it.row is None or it.row < 0 or it.row >= self.table_dl.rowCount():
             return
-        self.table_dl.item(it.row, 4).setText("Completado" if ok else f"Error: {msg}")
-        logging.debug("Download finished for %s: ok=%s, msg=%s", it.name, ok, msg)
+        current = self.table_dl.item(it.row, 4).text()
+        if current.startswith("Integridad"):
+            # Mantener el estado de integridad calculado previamente
+            logging.debug("Download finished for %s with integrity status: %s", it.name, current)
+        else:
+            self.table_dl.item(it.row, 4).setText("Completado" if ok else f"Error: {msg}")
+            logging.debug("Download finished for %s: ok=%s, msg=%s", it.name, ok, msg)
 
     def _cancel_item(self, it: DownloadItem) -> None:
         """
@@ -918,7 +924,7 @@ class MainWindow(QMainWindow):
 
     def _save_session(self) -> None:
         """Guarda la sesión actual de descargas a disco."""
-        data = [{"name": it.name, "url": it.url, "dest": it.dest_dir} for it in self.items]
+        data = [{"name": it.name, "url": it.url, "dest": it.dest_dir, "hash": it.expected_hash} for it in self.items]
         try:
             with open(self._session_path(), 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
@@ -937,9 +943,10 @@ class MainWindow(QMainWindow):
                 data = json.load(f)
             for d in data:
                 name = d.get('name'); url = d.get('url'); dest_dir = d.get('dest') or self.le_dir.text().strip()
+                expected_hash = d.get('hash')
                 if not (name and url and dest_dir):
                     continue
-                it = DownloadItem(name=name, url=url, dest_dir=dest_dir)
+                it = DownloadItem(name=name, url=url, dest_dir=dest_dir, expected_hash=expected_hash)
                 # Evitar duplicados
                 if any(x.name == name for x in self.items):
                     continue
@@ -960,7 +967,7 @@ class MainWindow(QMainWindow):
     def _save_session_silent(self) -> None:
         """Guarda la sesión actual de descargas en el fichero sin mostrar diálogos."""
         try:
-            data = [{"name": it.name, "url": it.url, "dest": it.dest_dir} for it in self.items]
+            data = [{"name": it.name, "url": it.url, "dest": it.dest_dir, "hash": it.expected_hash} for it in self.items]
             with open(self._session_path(), 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception:
@@ -976,9 +983,10 @@ class MainWindow(QMainWindow):
                 data = json.load(f)
             for d in data:
                 name = d.get('name'); url = d.get('url'); dest_dir = d.get('dest') or self.le_dir.text().strip()
+                expected_hash = d.get('hash')
                 if not (name and url and dest_dir):
                     continue
-                it = DownloadItem(name=name, url=url, dest_dir=dest_dir)
+                it = DownloadItem(name=name, url=url, dest_dir=dest_dir, expected_hash=expected_hash)
                 # Evitar duplicados
                 if any(x.name == name for x in self.items):
                     continue
@@ -1487,7 +1495,8 @@ class MainWindow(QMainWindow):
         if not dest_dir:
             QMessageBox.warning(self, "Descargas", "Selecciona una carpeta de descargas en la pestaña de Ajustes.")
             return
-        download_item = DownloadItem(name=name, url=row_data['url'], dest_dir=dest_dir)
+        expected_hash = row_data['hash'] if 'hash' in row_data.keys() else None
+        download_item = DownloadItem(name=name, url=row_data['url'], dest_dir=dest_dir, expected_hash=expected_hash)
         src_row = {
             'server': row_data['server'] or '',
             'fmt': row_data['fmt'] or '',
