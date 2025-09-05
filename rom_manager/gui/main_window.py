@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from urllib.parse import urlsplit, unquote
 import json
 import logging
 import sqlite3
@@ -316,7 +317,7 @@ class MainWindow(QMainWindow):
         d = QFileDialog.getExistingDirectory(self, "Carpeta de descargas")
         if d:
             self.le_dir.setText(d)
-            self.session_file = os.path.join(d, 'downloads_session.json')
+            self.session_file = os.path.join(d, 'sessions', 'downloads_session.json')
 
     def _connect_db(self) -> None:
         """Conecta a la base de datos y carga los filtros."""
@@ -414,20 +415,11 @@ class MainWindow(QMainWindow):
         # Mostrar resultados agrupados
         self._display_grouped_results()
 
-    def _build_download_name(
-        self,
-        label: Optional[str],
-        rom_name: Optional[str],
-        url: str,
-        fmt: Optional[str],
-    ) -> str:
-        """Genera un nombre de archivo seguro usando la ROM y su formato."""
-        base = rom_name or label or os.path.basename(url) or "archivo"
-        ext = (fmt or "").strip().lstrip(".")
-        if ext and not base.lower().endswith(f".{ext.lower()}"):
-            base = f"{base}.{ext}"
-        elif not os.path.splitext(base)[1]:
-            base = f"{base}.bin"
+    def _build_download_name(self, url: str) -> str:
+        """Devuelve el nombre de archivo original decodificando la URL."""
+        path = urlsplit(url).path
+        base = os.path.basename(path) or "archivo"
+        base = unquote(base)
         return safe_filename(base)
 
     def _enqueue_selected(self) -> None:
@@ -446,7 +438,7 @@ class MainWindow(QMainWindow):
             rom_name = r["rom_name"] if "rom_name" in r.keys() else None
             fmt_val = r["fmt"] if "fmt" in r.keys() else None
             base_display = rom_name or label or os.path.basename(r["url"]) or "archivo"
-            name = self._build_download_name(label, rom_name, r["url"], fmt_val)
+            name = self._build_download_name(r["url"])
             expected_hash = r["hash"] if "hash" in r.keys() else None
             item = DownloadItem(name=name, url=r["url"], dest_dir=save_dir, expected_hash=expected_hash)
             # Preparar un diccionario para mostrar el nombre de la ROM en la tabla
@@ -992,7 +984,9 @@ class MainWindow(QMainWindow):
     def _session_path(self) -> str:
         """Devuelve la ruta del fichero de sesión en la carpeta de descargas."""
         base = self.le_dir.text().strip() or os.getcwd()
-        return os.path.join(base, 'downloads_session.json')
+        session_dir = os.path.join(base, 'sessions')
+        os.makedirs(session_dir, exist_ok=True)
+        return os.path.join(session_dir, 'downloads_session.json')
 
     def _save_session(self) -> None:
         """Guarda la sesión actual de descargas a disco."""
@@ -1116,7 +1110,7 @@ class MainWindow(QMainWindow):
             self.chk_create_sys_dirs.setChecked(chk_sys)
             # Restaurar archivo de sesión
             if download_dir:
-                self.session_file = os.path.join(download_dir, 'downloads_session.json')
+                self.session_file = os.path.join(download_dir, 'sessions', 'downloads_session.json')
             # Cargar datos de cesta guardados (en formato JSON) después de conectar BD
             basket_json = settings.value('basket_items', '', type=str)
             self._saved_basket_json = basket_json
@@ -1563,13 +1557,14 @@ class MainWindow(QMainWindow):
         if not row_data:
             return
         # Crear DownloadItem
-        logging.debug("Adding from basket to downloads: ROM %s, server=%s, fmt=%s, lang=%s", group['name'], srv_name, fmt_name, lang_name)
-        name = self._build_download_name(
-            row_data.get('label'),
-            row_data.get('rom_name'),
-            row_data['url'],
-            row_data.get('fmt'),
+        logging.debug(
+            "Adding from basket to downloads: ROM %s, server=%s, fmt=%s, lang=%s",
+            group['name'],
+            srv_name,
+            fmt_name,
+            lang_name,
         )
+        name = self._build_download_name(row_data['url'])
         dest_dir = self.le_dir.text().strip()
         if not dest_dir:
             QMessageBox.warning(self, "Descargas", "Selecciona una carpeta de descargas en la pestaña de Ajustes.")
