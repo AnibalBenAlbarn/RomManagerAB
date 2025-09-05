@@ -44,6 +44,8 @@ class MainWindow(QMainWindow):
         # Preferencias del usuario
         # Flag para omitir la confirmación al cancelar descargas
         self.no_confirm_cancel: bool = False
+        # Flag para ocultar la advertencia de servidores al iniciar
+        self.hide_server_warning: bool = False
 
         # Estado
         self.model = LinksTableModel([])
@@ -80,6 +82,10 @@ class MainWindow(QMainWindow):
 
         # Cargar configuración previa y restaurar estado
         self._load_config()
+
+        # Mostrar advertencia sobre servidores si no está desactivada
+        if not self.hide_server_warning:
+            self._warn_servers_unavailable()
 
         # Si existe una ruta de BD guardada, conectar automáticamente
         db_path = self.le_db.text().strip()
@@ -266,6 +272,21 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.table_dl)
 
     # --- Acciones UI ---
+    def _warn_servers_unavailable(self) -> None:
+        """Muestra advertencia sobre servidores con problemas al iniciar."""
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Icon.Warning)
+        msg.setWindowTitle("Aviso de servidores")
+        msg.setText(
+            "Los servidores de Internet Archive están experimentando problemas y algunas descargas podrían fallar."
+        )
+        chk = QCheckBox("No volver a mostrar este mensaje")
+        msg.setCheckBox(chk)
+        msg.exec()
+        if chk.isChecked():
+            self.hide_server_warning = True
+            self._save_config()
+
     def _prompt_db_missing(self) -> None:
         """Muestra advertencia y permite elegir una base de datos si no está configurada."""
         msg = QMessageBox(self)
@@ -310,7 +331,6 @@ class MainWindow(QMainWindow):
             self.db = Database(path)
             self.db.connect()
             self._load_filters()
-            QMessageBox.information(self, "BD", "Conectado y filtros cargados")
         except Exception as e:
             QMessageBox.critical(self, "Error BD", str(e))
 
@@ -1056,6 +1076,7 @@ class MainWindow(QMainWindow):
             settings.setValue('basket_items', json.dumps(basket_data))
             # Guardar preferencia de confirmación de cancelación
             settings.setValue('no_confirm_cancel', self.no_confirm_cancel)
+            settings.setValue('hide_server_warning', self.hide_server_warning)
             settings.sync()
         except Exception:
             pass
@@ -1082,6 +1103,7 @@ class MainWindow(QMainWindow):
             self._saved_basket_json = basket_json
             # Restaurar preferencia de cancelación
             self.no_confirm_cancel = settings.value('no_confirm_cancel', False, type=bool)
+            self.hide_server_warning = settings.value('hide_server_warning', False, type=bool)
         except Exception:
             self._saved_basket_json = ''
 
