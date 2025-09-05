@@ -218,13 +218,14 @@ class MainWindow(QMainWindow):
         # Grupo de filtros y búsqueda
         filters = QGroupBox("Búsqueda y filtros"); f = QGridLayout(filters)
         self.le_search = QLineEdit(); self.le_search.setPlaceholderText("Buscar por ROM/etiqueta/servidor…")
-        self.cmb_system = QComboBox(); self.cmb_lang = QComboBox(); self.cmb_fmt = QComboBox()
+        self.cmb_system = QComboBox(); self.cmb_lang = QComboBox(); self.cmb_region = QComboBox(); self.cmb_fmt = QComboBox()
         self.btn_search = QPushButton("Buscar"); self.btn_search.clicked.connect(self._run_search)
         f.addWidget(QLabel("Texto:"),0,0); f.addWidget(self.le_search,0,1)
         f.addWidget(QLabel("Sistema:"),1,0); f.addWidget(self.cmb_system,1,1)
         f.addWidget(QLabel("Idioma:"),2,0); f.addWidget(self.cmb_lang,2,1)
-        f.addWidget(QLabel("Formato:"),3,0); f.addWidget(self.cmb_fmt,3,1)
-        f.addWidget(self.btn_search,0,2,4,1)
+        f.addWidget(QLabel("Región:"),3,0); f.addWidget(self.cmb_region,3,1)
+        f.addWidget(QLabel("Formato:"),4,0); f.addWidget(self.cmb_fmt,4,1)
+        f.addWidget(self.btn_search,0,2,5,1)
         lay.addWidget(filters)
 
         # Tabla de resultados agrupados: columnas ROM, Servidor, Formato, Idiomas, Acciones
@@ -336,10 +337,11 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error BD", str(e))
 
     def _load_filters(self) -> None:
-        """Carga los valores de los filtros (sistemas, idiomas, formatos) en los combobox."""
+        """Carga los valores de los filtros (sistemas, idiomas, regiones, formatos) en los combobox."""
         assert self.db
         self.cmb_system.clear(); [self.cmb_system.addItem(n, i) for i,n in self.db.get_systems()]
         self.cmb_lang.clear();   [self.cmb_lang.addItem(c, i) for i,c in self.db.get_languages()]
+        self.cmb_region.clear(); [self.cmb_region.addItem(c, i) for i,c in self.db.get_regions()]
         self.cmb_fmt.clear();    [self.cmb_fmt.addItem(x) for x in self.db.get_formats()]
 
     def _run_search(self) -> None:
@@ -354,10 +356,13 @@ class MainWindow(QMainWindow):
         text = self.le_search.text().strip()
         sys_id = self.cmb_system.currentData()
         lang_id = self.cmb_lang.currentData()
+        region_id = self.cmb_region.currentData()
         fmt_val = self.cmb_fmt.currentText(); fmt = None if fmt_val == 'Todos' else fmt_val
         try:
-            rows = self.db.search_links(text, sys_id, lang_id, fmt)
-            logging.debug(f"Search returned {len(rows)} rows for '{text}' with filters system={sys_id}, lang={lang_id}, fmt={fmt}.")
+            rows = self.db.search_links(text, sys_id, lang_id, region_id, fmt)
+            logging.debug(
+                f"Search returned {len(rows)} rows for '{text}' with filters system={sys_id}, lang={lang_id}, region={region_id}, fmt={fmt}."
+            )
         except Exception as e:
             logging.exception("Error during search: %s", e)
             QMessageBox.critical(self, "Búsqueda", str(e))
