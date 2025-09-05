@@ -434,12 +434,36 @@ class DownloadManager(QObject):
         self.queue_changed.emit()
         self.pump()
     def remove(self, item: DownloadItem) -> None:
-        # Cancelar si se encuentra activo
-        if item in self._active and item.task:
-            item.task.cancel()
+        """Saca un elemento de la cola o de la lista activa."""
+        logging.debug(
+            "Removing item from manager: %s (active=%s, queued=%s)",
+            item.name,
+            item in self._active,
+            item in self._queue,
+        )
+        # Cancelar y retirar de la lista de activos si está en ejecución
+        if item in self._active:
+            logging.debug("Item %s is active; cancelling and removing from active list", item.name)
+            if item.task:
+                try:
+                    item.task.cancel()
+                except Exception:
+                    logging.exception("Error cancelling task for %s", item.name)
+            try:
+                self._active.remove(item)
+            except Exception:
+                logging.exception("Error removing %s from active list", item.name)
+        # Quitar de la cola si todavía estaba en espera
         if item in self._queue:
-            self._queue.remove(item)
+            logging.debug("Removing %s from queue", item.name)
+            try:
+                self._queue.remove(item)
+            except Exception:
+                logging.exception("Error removing %s from queue", item.name)
+        else:
+            logging.debug("%s not found in queue", item.name)
         self.queue_changed.emit()
+        logging.debug("queue_changed emitted after removing %s", item.name)
         self.pump()
     def pump(self) -> None:
         # Lanza nuevas descargas hasta llenar el cupo de concurrencia
@@ -469,7 +493,13 @@ class DownloadManager(QObject):
             it.task.resume()
     def cancel(self, it: DownloadItem) -> None:
         if it.task:
-            it.task.cancel()
+            logging.debug("Cancelling task for %s", it.name)
+            try:
+                it.task.cancel()
+            except Exception:
+                logging.exception("Error cancelling task for %s", it.name)
+        else:
+            logging.debug("Cancel requested for %s but no task present", it.name)
 
 # -----------------------------
 # Ventana principal con pestañas (paridad JavaFX)
@@ -980,39 +1010,46 @@ class MainWindow(QMainWindow):
         contrario se muestra un cuadro de diálogo preguntando si desea
         cancelar con un checkbox para recordar la elección.
         """
-        # Si ya se ha solicitado no confirmar, cancelar sin preguntar
-        logging.debug("Attempting to cancel download: %s", it.name)
-        if self.no_confirm_cancel:
-            logging.debug("Cancellation confirmation disabled; cancelling %s directly", it.name)
-            self.manager.cancel(it)
-            logging.debug("Cancel signal sent for %s", it.name)
-            if it.row is not None and 0 <= it.row < self.table_dl.rowCount():
-                self.table_dl.item(it.row, 4).setText("Cancelado")
-            return
-        # Mostrar diálogo de confirmación
-        msg_box = QMessageBox(self)
-        msg_box.setIcon(QMessageBox.Question)
-        msg_box.setWindowTitle("Cancelar descarga")
-        msg_box.setText("¿Seguro que quieres cancelar la descarga?")
-        # Añadir checkbox para no volver a preguntar
-        chk = QCheckBox("No volver a preguntar")
-        msg_box.setCheckBox(chk)
-        msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        msg_box.setDefaultButton(QMessageBox.No)
-        res = msg_box.exec()
-        logging.debug("Cancellation dialog result for %s: %s", it.name, res)
-        if res == QMessageBox.Yes:
-            # Actualizar preferencia si el usuario marcó no preguntar
-            if chk.isChecked():
-                self.no_confirm_cancel = True
-                logging.debug("User opted to skip future cancel confirmations")
-            # Cancelar la descarga
-            self.manager.cancel(it)
-            logging.debug("Cancel signal sent for %s after confirmation", it.name)
-            if it.row is not None and 0 <= it.row < self.table_dl.rowCount():
-                self.table_dl.item(it.row, 4).setText("Cancelado")
-        # Guardar preferencia de cancelación
-        self._save_config()
+        try:
+            # Si ya se ha solicitado no confirmar, cancelar sin preguntar
+            logging.debug("Attempting to cancel download: %s", it.name)
+            if self.no_confirm_cancel:
+                logging.debug("Cancellation confirmation disabled; cancelling %s directly", it.name)
+                self.manager.cancel(it)
+                logging.debug("Cancel signal sent for %s", it.name)
+                if it.row is not None and 0 <= it.row < self.table_dl.rowCount():
+                    self.table_dl.item(it.row, 4).setText("Cancelado")
+                return
+            # Mostrar diálogo de confirmación
+            msg_box = QMessageBox(self)
+            msg_box.setIcon(QMessageBox.Question)
+            msg_box.setWindowTitle("Cancelar descarga")
+            msg_box.setText("¿Seguro que quieres cancelar la descarga?")
+            # Añadir checkbox para no volver a preguntar
+            chk = QCheckBox("No volver a preguntar")
+            msg_box.setCheckBox(chk)
+            msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+            msg_box.setDefaultButton(QMessageBox.No)
+            res = msg_box.exec()
+            logging.debug("Cancellation dialog result for %s: %s", it.name, res)
+            if res == QMessageBox.Yes:
+                # Actualizar preferencia si el usuario marcó no preguntar
+                if chk.isChecked():
+                    self.no_confirm_cancel = True
+                    logging.debug("User opted to skip future cancel confirmations")
+                # Cancelar la descarga
+                self.manager.cancel(it)
+                logging.debug("Cancel signal sent for %s after confirmation", it.name)
+                if it.row is not None and 0 <= it.row < self.table_dl.rowCount():
+                    self.table_dl.item(it.row, 4).setText("Cancelado")
+            # Guardar preferencia de cancelación
+            self._save_config()
+        except Exception:
+            logging.exception("Error cancelling download %s", it.name)
+            try:
+                QMessageBox.critical(self, "Error", f"No se pudo cancelar la descarga: {it.name}")
+            except Exception:
+                pass
 
     def _open_item_location(self, it: DownloadItem) -> None:
         """Abre la carpeta que contiene el archivo descargado o en descarga."""
@@ -1034,160 +1071,66 @@ class MainWindow(QMainWindow):
         muestra un cuadro de diálogo para confirmar la operación y opcionalmente
         borrar el fichero descargado.
         """
-        logging.debug(
-            "Requesting deletion for single download: %s (row=%s, dest=%s, has_task=%s)",
-            it.name,
-            it.row,
-            it.dest_dir,
-            it.task is not None,
-        )
-        # Dialogo de confirmación
-        msg_box = QMessageBox(self)
-        msg_box.setIcon(QMessageBox.Warning)
-        msg_box.setWindowTitle("Eliminar descarga")
-        msg_box.setText("¿Seguro que quieres eliminar esta descarga?")
-        chk_del_file = QCheckBox("También eliminar el fichero (si existe)")
-        msg_box.setCheckBox(chk_del_file)
-        msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        msg_box.setDefaultButton(QMessageBox.No)
-        res = msg_box.exec()
-        if res != QMessageBox.Yes:
-            logging.debug("Deletion canceled by user for %s", it.name)
-            return
-        # Cancelar cualquier descarga en curso y quitar de la cola
-        logging.debug("Deleting item: %s. Delete file: %s", it.name, chk_del_file.isChecked())
-        # Cancelar y desconectar señales para evitar actualizaciones concurrentes
         try:
-            self.manager.remove(it)
-            logging.debug("Removed item from manager: %s", it.name)
-        except Exception:
-            logging.exception("Error removing item from manager: %s", it.name)
-        # Desconectar señales del task para evitar actualizaciones después de eliminar
-        if it.task is not None:
-            try:
-                it.task.signals.progress.disconnect()
-            except Exception:
-                logging.exception(
-                    "Error disconnecting progress signal for %s", it.name
-                )
-            try:
-                it.task.signals.finished_ok.disconnect()
-            except Exception:
-                logging.exception(
-                    "Error disconnecting finished_ok signal for %s", it.name
-                )
-            try:
-                it.task.signals.failed.disconnect()
-            except Exception:
-                logging.exception("Error disconnecting failed signal for %s", it.name)
-            # Liberar referencia a la tarea
-            it.task = None
-        # Eliminar fila de la tabla
-        if it.row is not None:
-            row = it.row
-            logging.debug("Removing table row %s for %s", row, it.name)
-            try:
-                self.table_dl.removeRow(row)
-            except Exception:
-                logging.exception("Error removing row %s for %s", row, it.name)
-            # Actualizar las filas de los items restantes
-            for other in self.items:
-                if other.row is not None and other.row > row:
-                    other.row -= 1
-            # Marcar la fila del item eliminado como None para evitar actualizaciones posteriores
-            it.row = None
-        # Quitar de la lista de items
-        if it in self.items:
-            self.items.remove(it)
-            logging.debug("Removed %s from internal items list", it.name)
-        # Eliminar archivos si procede
-        if chk_del_file.isChecked():
-            try:
-                dest_dir = it.dest_dir
-                filename = safe_filename(it.name)
-                final_path = os.path.join(dest_dir, filename)
-                part_path = final_path + '.part'
-                # Eliminar archivo final
-                if os.path.exists(final_path):
-                    os.remove(final_path)
-                # Eliminar archivo parcial
-                if os.path.exists(part_path):
-                    os.remove(part_path)
-                logging.debug("Deleted files for %s", it.name)
-            except Exception:
-                logging.exception("Error deleting files for %s", it.name)
-        # Guardar sesión después de eliminar
-        logging.debug("Saving session after deleting %s", it.name)
-        self._save_session_silent()
-        logging.debug("Session saved after deleting %s", it.name)
-
-    def _delete_selected_items(self) -> None:
-        """Elimina todas las filas seleccionadas en la tabla de descargas."""
-        # Obtener índices de filas seleccionadas
-        selected_rows = sorted([idx.row() for idx in self.table_dl.selectionModel().selectedRows()])
-        logging.debug("Rows selected for deletion: %s", selected_rows)
-        if not selected_rows:
-            logging.debug("No rows selected for deletion")
-            return
-        # Mapear filas a DownloadItem
-        items_to_delete: List[DownloadItem] = []
-        for it in list(self.items):
-            if it.row in selected_rows:
-                items_to_delete.append(it)
-        if not items_to_delete:
-            return
-        logging.debug("Requesting deletion for %d selected downloads", len(items_to_delete))
-        # Preguntar confirmación para múltiples elementos
-        if len(items_to_delete) == 1:
-            self._delete_single_item(items_to_delete[0])
-            return
-        msg_box = QMessageBox(self)
-        msg_box.setIcon(QMessageBox.Warning)
-        msg_box.setWindowTitle("Eliminar descargas")
-        msg_box.setText("¿Seguro que quieres eliminar las descargas seleccionadas?")
-        chk_del_file = QCheckBox("También eliminar los ficheros (si existen)")
-        msg_box.setCheckBox(chk_del_file)
-        msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        msg_box.setDefaultButton(QMessageBox.No)
-        res = msg_box.exec()
-        if res != QMessageBox.Yes:
-            logging.debug("Batch deletion canceled by user")
-            return
-        # Eliminar cada item
-        # Procesar de mayor a menor índice para evitar problemas al actualizar filas
-        for it in sorted(items_to_delete, key=lambda x: x.row if x.row is not None else -1, reverse=True):
-            logging.debug("Deleting item in batch: %s", it.name)
-            # Cancelar y remover de la cola
+            logging.debug(
+                "Requesting deletion for single download: %s (row=%s, dest=%s, has_task=%s)",
+                it.name,
+                it.row,
+                it.dest_dir,
+                it.task is not None,
+            )
+            # Dialogo de confirmación
+            msg_box = QMessageBox(self)
+            msg_box.setIcon(QMessageBox.Warning)
+            msg_box.setWindowTitle("Eliminar descarga")
+            msg_box.setText("¿Seguro que quieres eliminar esta descarga?")
+            chk_del_file = QCheckBox("También eliminar el fichero (si existe)")
+            msg_box.setCheckBox(chk_del_file)
+            msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+            msg_box.setDefaultButton(QMessageBox.No)
+            res = msg_box.exec()
+            if res != QMessageBox.Yes:
+                logging.debug("Deletion canceled by user for %s", it.name)
+                return
+            # Cancelar cualquier descarga en curso y quitar de la cola
+            logging.debug("Deleting item: %s. Delete file: %s", it.name, chk_del_file.isChecked())
+            # Cancelar y desconectar señales para evitar actualizaciones concurrentes
             try:
                 self.manager.remove(it)
+                logging.debug("Removed item from manager: %s", it.name)
             except Exception:
-                logging.exception("Error removing %s from manager during batch delete", it.name)
-            # Desconectar señales del task para evitar actualizaciones tras la eliminación
+                logging.exception("Error removing item from manager: %s", it.name)
+            # Desconectar señales del task para evitar actualizaciones después de eliminar
             if it.task is not None:
                 try:
                     it.task.signals.progress.disconnect()
                 except Exception:
-                    logging.exception("Error disconnecting progress signal for %s", it.name)
+                    logging.exception(
+                        "Error disconnecting progress signal for %s", it.name
+                    )
                 try:
                     it.task.signals.finished_ok.disconnect()
                 except Exception:
-                    logging.exception("Error disconnecting finished_ok signal for %s", it.name)
+                    logging.exception(
+                        "Error disconnecting finished_ok signal for %s", it.name
+                    )
                 try:
                     it.task.signals.failed.disconnect()
                 except Exception:
                     logging.exception("Error disconnecting failed signal for %s", it.name)
+                # Liberar referencia a la tarea
                 it.task = None
-            # Eliminar fila de la tabla y ajustar índices
+            # Eliminar fila de la tabla
             if it.row is not None:
-                row_index = it.row
-                logging.debug("Removing table row %s for %s", row_index, it.name)
+                row = it.row
+                logging.debug("Removing table row %s for %s", row, it.name)
                 try:
-                    self.table_dl.removeRow(row_index)
+                    self.table_dl.removeRow(row)
                 except Exception:
-                    logging.exception("Error removing row %s for %s", row_index, it.name)
-                # Actualizar filas de items restantes
+                    logging.exception("Error removing row %s for %s", row, it.name)
+                # Actualizar las filas de los items restantes
                 for other in self.items:
-                    if other.row is not None and other.row > row_index:
+                    if other.row is not None and other.row > row:
                         other.row -= 1
                 # Marcar la fila del item eliminado como None para evitar actualizaciones posteriores
                 it.row = None
@@ -1202,17 +1145,125 @@ class MainWindow(QMainWindow):
                     filename = safe_filename(it.name)
                     final_path = os.path.join(dest_dir, filename)
                     part_path = final_path + '.part'
+                    # Eliminar archivo final
                     if os.path.exists(final_path):
                         os.remove(final_path)
+                    # Eliminar archivo parcial
                     if os.path.exists(part_path):
                         os.remove(part_path)
                     logging.debug("Deleted files for %s", it.name)
                 except Exception:
                     logging.exception("Error deleting files for %s", it.name)
-        # Guardar sesión tras eliminación múltiple
-        logging.debug("Saving session after batch deletion of %d items", len(items_to_delete))
-        self._save_session_silent()
-        logging.debug("Session saved after batch deletion")
+            # Guardar sesión después de eliminar
+            logging.debug("Saving session after deleting %s", it.name)
+            self._save_session_silent()
+            logging.debug("Session saved after deleting %s", it.name)
+        except Exception:
+            logging.exception("Error deleting download %s", it.name)
+            try:
+                QMessageBox.critical(self, "Error", f"No se pudo eliminar la descarga: {it.name}")
+            except Exception:
+                pass
+
+    def _delete_selected_items(self) -> None:
+        """Elimina todas las filas seleccionadas en la tabla de descargas."""
+        try:
+            # Obtener índices de filas seleccionadas
+            selected_rows = sorted([idx.row() for idx in self.table_dl.selectionModel().selectedRows()])
+            logging.debug("Rows selected for deletion: %s", selected_rows)
+            if not selected_rows:
+                logging.debug("No rows selected for deletion")
+                return
+            # Mapear filas a DownloadItem
+            items_to_delete: List[DownloadItem] = []
+            for it in list(self.items):
+                if it.row in selected_rows:
+                    items_to_delete.append(it)
+            if not items_to_delete:
+                return
+            logging.debug("Requesting deletion for %d selected downloads", len(items_to_delete))
+            # Preguntar confirmación para múltiples elementos
+            if len(items_to_delete) == 1:
+                self._delete_single_item(items_to_delete[0])
+                return
+            msg_box = QMessageBox(self)
+            msg_box.setIcon(QMessageBox.Warning)
+            msg_box.setWindowTitle("Eliminar descargas")
+            msg_box.setText("¿Seguro que quieres eliminar las descargas seleccionadas?")
+            chk_del_file = QCheckBox("También eliminar los ficheros (si existen)")
+            msg_box.setCheckBox(chk_del_file)
+            msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+            msg_box.setDefaultButton(QMessageBox.No)
+            res = msg_box.exec()
+            if res != QMessageBox.Yes:
+                logging.debug("Batch deletion canceled by user")
+                return
+            # Eliminar cada item
+            # Procesar de mayor a menor índice para evitar problemas al actualizar filas
+            for it in sorted(items_to_delete, key=lambda x: x.row if x.row is not None else -1, reverse=True):
+                logging.debug("Deleting item in batch: %s", it.name)
+                # Cancelar y remover de la cola
+                try:
+                    self.manager.remove(it)
+                except Exception:
+                    logging.exception("Error removing %s from manager during batch delete", it.name)
+                # Desconectar señales del task para evitar actualizaciones tras la eliminación
+                if it.task is not None:
+                    try:
+                        it.task.signals.progress.disconnect()
+                    except Exception:
+                        logging.exception("Error disconnecting progress signal for %s", it.name)
+                    try:
+                        it.task.signals.finished_ok.disconnect()
+                    except Exception:
+                        logging.exception("Error disconnecting finished_ok signal for %s", it.name)
+                    try:
+                        it.task.signals.failed.disconnect()
+                    except Exception:
+                        logging.exception("Error disconnecting failed signal for %s", it.name)
+                    it.task = None
+                # Eliminar fila de la tabla y ajustar índices
+                if it.row is not None:
+                    row_index = it.row
+                    logging.debug("Removing table row %s for %s", row_index, it.name)
+                    try:
+                        self.table_dl.removeRow(row_index)
+                    except Exception:
+                        logging.exception("Error removing row %s for %s", row_index, it.name)
+                    # Actualizar filas de items restantes
+                    for other in self.items:
+                        if other.row is not None and other.row > row_index:
+                            other.row -= 1
+                    # Marcar la fila del item eliminado como None para evitar actualizaciones posteriores
+                    it.row = None
+                # Quitar de la lista de items
+                if it in self.items:
+                    self.items.remove(it)
+                    logging.debug("Removed %s from internal items list", it.name)
+                # Eliminar archivos si procede
+                if chk_del_file.isChecked():
+                    try:
+                        dest_dir = it.dest_dir
+                        filename = safe_filename(it.name)
+                        final_path = os.path.join(dest_dir, filename)
+                        part_path = final_path + '.part'
+                        if os.path.exists(final_path):
+                            os.remove(final_path)
+                        if os.path.exists(part_path):
+                            os.remove(part_path)
+                        logging.debug("Deleted files for %s", it.name)
+                    except Exception:
+                        logging.exception("Error deleting files for %s", it.name)
+            # Guardar sesión tras eliminación múltiple
+            logging.debug("Saving session after batch deletion of %d items", len(items_to_delete))
+            self._save_session_silent()
+            logging.debug("Session saved after batch deletion")
+        except Exception:
+            logging.exception("Error deleting selected downloads")
+            try:
+                QMessageBox.critical(self, "Error", "No se pudieron eliminar las descargas seleccionadas")
+            except Exception:
+                pass
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:
         """
