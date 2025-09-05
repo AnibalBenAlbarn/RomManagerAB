@@ -120,7 +120,9 @@ class Database:
             )
             params.append(language_id)
         if region_id is not None:
-            where.append("roms.region_id = ?")
+            where.append(
+                "EXISTS (SELECT 1 FROM rom_regions rr WHERE rr.rom_id = roms.id AND rr.region_id = ?)"
+            )
             params.append(region_id)
         if fmt is not None and fmt != "Todos":
             where.append("links.fmt = ?")
