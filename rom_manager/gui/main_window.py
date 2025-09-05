@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from urllib.parse import urlsplit, unquote
 import json
 import logging
 import sqlite3
@@ -415,8 +416,10 @@ class MainWindow(QMainWindow):
         self._display_grouped_results()
 
     def _build_download_name(self, url: str) -> str:
-        """Devuelve el nombre de archivo según aparece en la URL."""
-        base = os.path.basename(url) or "archivo"
+        """Devuelve el nombre de archivo original decodificando la URL."""
+        path = urlsplit(url).path
+        base = os.path.basename(path) or "archivo"
+        base = unquote(base)
         return safe_filename(base)
 
     def _enqueue_selected(self) -> None:
