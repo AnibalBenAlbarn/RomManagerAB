@@ -132,20 +132,45 @@ class DownloadTask(QRunnable):
                 # Si no se pueden aplicar reintentos, se utiliza la sesión por defecto
                 pass
 
-            # Intento HEAD para conocer el tamaño total
+            # Intento HEAD para conocer el tamaño total y detectar 416
             total = 0
             try:
                 h = session.head(self.url, headers=headers, allow_redirects=True, timeout=(10, 15))
+                if h.status_code == 416 and 'Range' in headers:
+                    headers.pop('Range', None)
+                    downloaded = 0
+                    try:
+                        os.remove(part_path)
+                    except Exception:
+                        pass
+                    h = session.head(self.url, headers=headers, allow_redirects=True, timeout=(10, 15))
                 if h.status_code in (200, 206):
                     total = int(h.headers.get('Content-Length', '0'))
             except Exception:
                 pass
 
-            # Iniciar la descarga en streaming
-            with session.get(self.url, headers=headers, stream=True, allow_redirects=True,
-                              timeout=(10, 60)) as r:
+            # Iniciar la descarga en streaming, reintentando sin Range si hay 416
+            for attempt in range(2):
+                r = session.get(self.url, headers=headers, stream=True, allow_redirects=True,
+                                 timeout=(10, 60))
+                if r.status_code == 416 and 'Range' in headers and attempt == 0:
+                    r.close()
+                    headers.pop('Range', None)
+                    downloaded = 0
+                    try:
+                        os.remove(part_path)
+                    except Exception:
+                        pass
+                    try:
+                        h = session.head(self.url, headers=headers, allow_redirects=True, timeout=(10, 15))
+                        if h.status_code in (200, 206):
+                            total = int(h.headers.get('Content-Length', '0'))
+                    except Exception:
+                        pass
+                    continue
                 if r.status_code not in (200, 206):
                     self.signals.failed.emit(f"HTTP {r.status_code}")
+                    r.close()
                     return
 
                 # Si el servidor no soporta range y enviamos Range, reiniciar el conteo
@@ -204,6 +229,8 @@ class DownloadTask(QRunnable):
                         self.signals.progress.emit(
                             downloaded, total, float(last_speed), float(last_eta), 'Descargando'
                         )
+                r.close()
+                break
 
             # Renombrar el archivo descargado correctamente
             if os.path.exists(final_path):
