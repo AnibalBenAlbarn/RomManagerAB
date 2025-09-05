@@ -63,6 +63,15 @@ class Database:
         cur = self.conn.execute("SELECT id, code FROM languages ORDER BY code")
         return [(None, "Todos")] + [(r[0], r[1]) for r in cur.fetchall()]
 
+    def get_regions(self) -> List[Tuple[Optional[int], str]]:
+        """
+        Devuelve la lista de regiones disponibles para el filtro.
+        El primer elemento de la lista corresponde a "Todos" (sin filtro).
+        """
+        assert self.conn
+        cur = self.conn.execute("SELECT id, code FROM regions ORDER BY code")
+        return [(None, "Todos")] + [(r[0], r[1]) for r in cur.fetchall()]
+
     def get_formats(self) -> List[str]:
         """
         Devuelve la lista de formatos de archivo distintos disponibles.
@@ -79,6 +88,7 @@ class Database:
         text: str = "",
         system_id: Optional[int] = None,
         language_id: Optional[int] = None,
+        region_id: Optional[int] = None,
         fmt: Optional[str] = None,
         limit: int = 1000,
     ) -> List[sqlite3.Row]:
@@ -89,6 +99,7 @@ class Database:
         :param text: Texto de búsqueda para coincidir con nombre de ROM, etiqueta o servidor.
         :param system_id: Identificador del sistema seleccionado (None para todos).
         :param language_id: Identificador del idioma seleccionado (None para todos).
+        :param region_id: Identificador de la región seleccionada (None para todos).
         :param fmt: Formato de archivo seleccionado (None o "Todos" para todos).
         :param limit: Máximo número de resultados a devolver.
         :return: Lista de filas con información relevante para cada enlace de descarga.
@@ -108,6 +119,9 @@ class Database:
                 "EXISTS (SELECT 1 FROM link_languages ll WHERE ll.link_id = links.id AND ll.language_id = ?)"
             )
             params.append(language_id)
+        if region_id is not None:
+            where.append("roms.region_id = ?")
+            params.append(region_id)
         if fmt is not None and fmt != "Todos":
             where.append("links.fmt = ?")
             params.append(fmt)
