@@ -982,16 +982,16 @@ class MainWindow(QMainWindow):
             return
         # Mostrar diálogo de confirmación
         msg_box = QMessageBox(self)
-        msg_box.setIcon(QMessageBox.Question)
+        msg_box.setIcon(QMessageBox.Icon.Question)
         msg_box.setWindowTitle("Cancelar descarga")
         msg_box.setText("¿Seguro que quieres cancelar la descarga?")
         # Añadir checkbox para no volver a preguntar
         chk = QCheckBox("No volver a preguntar")
         msg_box.setCheckBox(chk)
-        msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        msg_box.setDefaultButton(QMessageBox.No)
+        msg_box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        msg_box.setDefaultButton(QMessageBox.StandardButton.No)
         res = msg_box.exec()
-        if res == QMessageBox.Yes:
+        if res == QMessageBox.StandardButton.Yes:
             # Actualizar preferencia si el usuario marcó no preguntar
             if chk.isChecked():
                 self.no_confirm_cancel = True
@@ -1031,15 +1031,15 @@ class MainWindow(QMainWindow):
         )
         # Dialogo de confirmación
         msg_box = QMessageBox(self)
-        msg_box.setIcon(QMessageBox.Warning)
+        msg_box.setIcon(QMessageBox.Icon.Warning)
         msg_box.setWindowTitle("Eliminar descarga")
         msg_box.setText("¿Seguro que quieres eliminar esta descarga?")
         chk_del_file = QCheckBox("También eliminar el fichero (si existe)")
         msg_box.setCheckBox(chk_del_file)
-        msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        msg_box.setDefaultButton(QMessageBox.No)
+        msg_box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        msg_box.setDefaultButton(QMessageBox.StandardButton.No)
         res = msg_box.exec()
-        if res != QMessageBox.Yes:
+        if res != QMessageBox.StandardButton.Yes:
             logging.debug("Deletion canceled by user for %s", it.name)
             return
         # Cancelar cualquier descarga en curso y quitar de la cola
@@ -1130,15 +1130,15 @@ class MainWindow(QMainWindow):
             self._delete_single_item(items_to_delete[0])
             return
         msg_box = QMessageBox(self)
-        msg_box.setIcon(QMessageBox.Warning)
+        msg_box.setIcon(QMessageBox.Icon.Warning)
         msg_box.setWindowTitle("Eliminar descargas")
         msg_box.setText("¿Seguro que quieres eliminar las descargas seleccionadas?")
         chk_del_file = QCheckBox("También eliminar los ficheros (si existen)")
         msg_box.setCheckBox(chk_del_file)
-        msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        msg_box.setDefaultButton(QMessageBox.No)
+        msg_box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        msg_box.setDefaultButton(QMessageBox.StandardButton.No)
         res = msg_box.exec()
-        if res != QMessageBox.Yes:
+        if res != QMessageBox.StandardButton.Yes:
             logging.debug("Batch deletion canceled by user")
             return
         # Eliminar cada item
@@ -1312,7 +1312,7 @@ class MainWindow(QMainWindow):
                 return
             # Mostrar diálogo de confirmación para múltiples descargas
             msg_box = QMessageBox(self)
-            msg_box.setIcon(QMessageBox.Question)
+            msg_box.setIcon(QMessageBox.Icon.Question)
             msg_box.setWindowTitle("Cancelar descargas")
             if len(items) == 1:
                 msg_box.setText("¿Seguro que quieres cancelar la descarga seleccionada?")
@@ -1320,10 +1320,10 @@ class MainWindow(QMainWindow):
                 msg_box.setText("¿Seguro que quieres cancelar las descargas seleccionadas?")
             chk = QCheckBox("No volver a preguntar")
             msg_box.setCheckBox(chk)
-            msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-            msg_box.setDefaultButton(QMessageBox.No)
+            msg_box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            msg_box.setDefaultButton(QMessageBox.StandardButton.No)
             res = msg_box.exec()
-            if res == QMessageBox.Yes:
+            if res == QMessageBox.StandardButton.Yes:
                 if chk.isChecked():
                     self.no_confirm_cancel = True
                 for it in items:
