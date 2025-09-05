@@ -2,7 +2,7 @@
 
 Este módulo prepara la configuración de logging, captura excepciones no
 controladas y crea la aplicación PyQt6 utilizando la clase ``MainWindow``
-definida en :mod:`Descargador`. Separar el punto de entrada facilita la
+definida en :mod:`rom_manager.gui`. Separar el punto de entrada facilita la
 estructura del proyecto y permite importar la interfaz gráfica sin ejecutar la
 aplicación de inmediato.
 """
@@ -48,7 +48,7 @@ def _setup_logging() -> None:
 def main() -> None:
     _setup_logging()
     from PyQt6.QtWidgets import QApplication  # Importar tras configurar logging
-    from .Descargador import MainWindow
+    from .gui import MainWindow
 
     class Application(QApplication):
         """Subclase que captura excepciones en el bucle de eventos de Qt."""
