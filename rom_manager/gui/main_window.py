@@ -88,6 +88,9 @@ class MainWindow(QMainWindow):
                 self._connect_db()
             except Exception:
                 pass
+        # Advertir si no hay base de datos configurada
+        if not self.db:
+            self._prompt_db_missing()
         # Cargar cesta guardada después de conectar BD
         if getattr(self, '_saved_basket_json', None) and self.db:
             try:
@@ -263,6 +266,23 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.table_dl)
 
     # --- Acciones UI ---
+    def _prompt_db_missing(self) -> None:
+        """Muestra advertencia y permite elegir una base de datos si no está configurada."""
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Icon.Warning)
+        msg.setWindowTitle("BD no configurada")
+        msg.setText("No se ha configurado ninguna base de datos. ¿Deseas seleccionarla ahora?")
+        btn_browse = msg.addButton("Explorar…", QMessageBox.ButtonRole.AcceptRole)
+        msg.addButton(QMessageBox.StandardButton.Cancel)
+        msg.exec()
+        if msg.clickedButton() == btn_browse:
+            self._choose_db()
+            if self.le_db.text().strip():
+                try:
+                    self._connect_db()
+                except Exception:
+                    pass
+
     def _choose_db(self) -> None:
         """Diálogo para seleccionar la base de datos SQLite."""
         fn, _ = QFileDialog.getOpenFileName(self, "Selecciona BD SQLite", "",
