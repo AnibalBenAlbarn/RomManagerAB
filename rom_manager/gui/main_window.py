@@ -14,9 +14,9 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QLineEdit,
     QPushButton, QFileDialog, QGroupBox, QComboBox, QSpinBox, QTableView, QTableWidget,
     QTableWidgetItem, QHeaderView, QMessageBox, QProgressBar, QCheckBox, QTabWidget,
-    QAbstractItemView, QMenu
+    QAbstractItemView, QMenu, QStyle
 )
-from PyQt6.QtGui import QDesktopServices, QStyle
+from PyQt6.QtGui import QDesktopServices
 
 from ..database import Database
 from ..models import LinksTableModel
