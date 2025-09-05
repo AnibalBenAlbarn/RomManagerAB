@@ -1563,12 +1563,21 @@ class MainWindow(QMainWindow):
         if not row_data:
             return
         # Crear DownloadItem
-        logging.debug("Adding from basket to downloads: ROM %s, server=%s, fmt=%s, lang=%s", group['name'], srv_name, fmt_name, lang_name)
+        logging.debug(
+            "Adding from basket to downloads: ROM %s, server=%s, fmt=%s, lang=%s",
+            group['name'],
+            srv_name,
+            fmt_name,
+            lang_name,
+        )
+        label = row_data['label'] if 'label' in row_data.keys() else None
+        rom_name = row_data['rom_name'] if 'rom_name' in row_data.keys() else None
+        fmt_val = row_data['fmt'] if 'fmt' in row_data.keys() else None
         name = self._build_download_name(
-            row_data.get('label'),
-            row_data.get('rom_name'),
+            label,
+            rom_name,
             row_data['url'],
-            row_data.get('fmt'),
+            fmt_val,
         )
         dest_dir = self.le_dir.text().strip()
         if not dest_dir:
