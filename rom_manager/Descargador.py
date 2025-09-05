@@ -1101,6 +1101,7 @@ class MainWindow(QMainWindow):
             except Exception:
                 logging.exception("Error removing item from manager: %s", it.name)
             # Desconectar señales del task para evitar actualizaciones después de eliminar
+
             if it.task is not None:
                 try:
                     it.task.signals.progress.disconnect()
@@ -1114,16 +1115,17 @@ class MainWindow(QMainWindow):
                     logging.exception(
                         "Error disconnecting finished_ok signal for %s", it.name
                     )
+
                 try:
                     it.task.signals.failed.disconnect()
                 except Exception:
                     logging.exception("Error disconnecting failed signal for %s", it.name)
-                # Liberar referencia a la tarea
                 it.task = None
             # Eliminar fila de la tabla
             if it.row is not None:
                 row = it.row
                 logging.debug("Removing table row %s for %s", row, it.name)
+
                 try:
                     self.table_dl.removeRow(row)
                 except Exception:
@@ -1154,6 +1156,7 @@ class MainWindow(QMainWindow):
                     logging.debug("Deleted files for %s", it.name)
                 except Exception:
                     logging.exception("Error deleting files for %s", it.name)
+
             # Guardar sesión después de eliminar
             logging.debug("Saving session after deleting %s", it.name)
             self._save_session_silent()
