@@ -13,6 +13,7 @@ import threading
 from typing import Optional, List
 from dataclasses import dataclass
 
+import logging
 import requests
 from PyQt6.QtCore import QObject, pyqtSignal, QRunnable, QThreadPool
 
@@ -241,12 +242,29 @@ class DownloadManager(QObject):
         self.pump()
 
     def remove(self, item: DownloadItem) -> None:
+        logging.debug(
+            "Removing item from manager: %s (active=%s, queued=%s)",
+            item.name,
+            item in self._active,
+            item in self._queue,
+        )
         # Cancelar si se encuentra activo
         if item in self._active and item.task:
-            item.task.cancel()
+            logging.debug("Cancelling active task for %s", item.name)
+            try:
+                item.task.cancel()
+            except Exception:
+                logging.exception("Error cancelling task for %s", item.name)
         if item in self._queue:
-            self._queue.remove(item)
+            logging.debug("Removing %s from queue", item.name)
+            try:
+                self._queue.remove(item)
+            except Exception:
+                logging.exception("Error removing %s from queue", item.name)
+        else:
+            logging.debug("%s not found in queue", item.name)
         self.queue_changed.emit()
+        logging.debug("queue_changed emitted after removing %s", item.name)
         self.pump()
 
     def pump(self) -> None:

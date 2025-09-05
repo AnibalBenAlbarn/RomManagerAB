@@ -1022,7 +1022,13 @@ class MainWindow(QMainWindow):
         muestra un cuadro de diálogo para confirmar la operación y opcionalmente
         borrar el fichero descargado.
         """
-        logging.debug("Requesting deletion for single download: %s", it.name)
+        logging.debug(
+            "Requesting deletion for single download: %s (row=%s, dest=%s, has_task=%s)",
+            it.name,
+            it.row,
+            it.dest_dir,
+            it.task is not None,
+        )
         # Dialogo de confirmación
         msg_box = QMessageBox(self)
         msg_box.setIcon(QMessageBox.Warning)
@@ -1039,27 +1045,39 @@ class MainWindow(QMainWindow):
         # Cancelar cualquier descarga en curso y quitar de la cola
         logging.debug("Deleting item: %s. Delete file: %s", it.name, chk_del_file.isChecked())
         # Cancelar y desconectar señales para evitar actualizaciones concurrentes
-        self.manager.remove(it)
+        try:
+            self.manager.remove(it)
+            logging.debug("Removed item from manager: %s", it.name)
+        except Exception:
+            logging.exception("Error removing item from manager: %s", it.name)
         # Desconectar señales del task para evitar actualizaciones después de eliminar
         if it.task is not None:
             try:
                 it.task.signals.progress.disconnect()
             except Exception:
-                pass
+                logging.exception(
+                    "Error disconnecting progress signal for %s", it.name
+                )
             try:
                 it.task.signals.finished_ok.disconnect()
             except Exception:
-                pass
+                logging.exception(
+                    "Error disconnecting finished_ok signal for %s", it.name
+                )
             try:
                 it.task.signals.failed.disconnect()
             except Exception:
-                pass
+                logging.exception("Error disconnecting failed signal for %s", it.name)
             # Liberar referencia a la tarea
             it.task = None
         # Eliminar fila de la tabla
         if it.row is not None:
             row = it.row
-            self.table_dl.removeRow(row)
+            logging.debug("Removing table row %s for %s", row, it.name)
+            try:
+                self.table_dl.removeRow(row)
+            except Exception:
+                logging.exception("Error removing row %s for %s", row, it.name)
             # Actualizar las filas de los items restantes
             for other in self.items:
                 if other.row is not None and other.row > row:
@@ -1069,6 +1087,7 @@ class MainWindow(QMainWindow):
         # Quitar de la lista de items
         if it in self.items:
             self.items.remove(it)
+            logging.debug("Removed %s from internal items list", it.name)
         # Eliminar archivos si procede
         if chk_del_file.isChecked():
             try:
@@ -1082,16 +1101,21 @@ class MainWindow(QMainWindow):
                 # Eliminar archivo parcial
                 if os.path.exists(part_path):
                     os.remove(part_path)
+                logging.debug("Deleted files for %s", it.name)
             except Exception:
-                pass
+                logging.exception("Error deleting files for %s", it.name)
         # Guardar sesión después de eliminar
+        logging.debug("Saving session after deleting %s", it.name)
         self._save_session_silent()
+        logging.debug("Session saved after deleting %s", it.name)
 
     def _delete_selected_items(self) -> None:
         """Elimina todas las filas seleccionadas en la tabla de descargas."""
         # Obtener índices de filas seleccionadas
         selected_rows = sorted([idx.row() for idx in self.table_dl.selectionModel().selectedRows()])
+        logging.debug("Rows selected for deletion: %s", selected_rows)
         if not selected_rows:
+            logging.debug("No rows selected for deletion")
             return
         # Mapear filas a DownloadItem
         items_to_delete: List[DownloadItem] = []
@@ -1122,30 +1146,33 @@ class MainWindow(QMainWindow):
         for it in sorted(items_to_delete, key=lambda x: x.row if x.row is not None else -1, reverse=True):
             logging.debug("Deleting item in batch: %s", it.name)
             # Cancelar y remover de la cola
-            self.manager.remove(it)
+            try:
+                self.manager.remove(it)
+            except Exception:
+                logging.exception("Error removing %s from manager during batch delete", it.name)
             # Desconectar señales del task para evitar actualizaciones tras la eliminación
             if it.task is not None:
                 try:
                     it.task.signals.progress.disconnect()
                 except Exception:
-                    pass
+                    logging.exception("Error disconnecting progress signal for %s", it.name)
                 try:
                     it.task.signals.finished_ok.disconnect()
                 except Exception:
-                    pass
+                    logging.exception("Error disconnecting finished_ok signal for %s", it.name)
                 try:
                     it.task.signals.failed.disconnect()
                 except Exception:
-                    pass
+                    logging.exception("Error disconnecting failed signal for %s", it.name)
                 it.task = None
             # Eliminar fila de la tabla y ajustar índices
             if it.row is not None:
                 row_index = it.row
+                logging.debug("Removing table row %s for %s", row_index, it.name)
                 try:
                     self.table_dl.removeRow(row_index)
                 except Exception:
-                    # Silenciar errores si la fila ya no existe
-                    pass
+                    logging.exception("Error removing row %s for %s", row_index, it.name)
                 # Actualizar filas de items restantes
                 for other in self.items:
                     if other.row is not None and other.row > row_index:
@@ -1155,6 +1182,7 @@ class MainWindow(QMainWindow):
             # Quitar de la lista de items
             if it in self.items:
                 self.items.remove(it)
+                logging.debug("Removed %s from internal items list", it.name)
             # Eliminar archivos si procede
             if chk_del_file.isChecked():
                 try:
@@ -1166,10 +1194,13 @@ class MainWindow(QMainWindow):
                         os.remove(final_path)
                     if os.path.exists(part_path):
                         os.remove(part_path)
+                    logging.debug("Deleted files for %s", it.name)
                 except Exception:
-                    pass
+                    logging.exception("Error deleting files for %s", it.name)
         # Guardar sesión tras eliminación múltiple
+        logging.debug("Saving session after batch deletion of %d items", len(items_to_delete))
         self._save_session_silent()
+        logging.debug("Session saved after batch deletion")
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:
         """
