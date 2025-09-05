@@ -414,6 +414,22 @@ class MainWindow(QMainWindow):
         # Mostrar resultados agrupados
         self._display_grouped_results()
 
+    def _build_download_name(
+        self,
+        label: Optional[str],
+        rom_name: Optional[str],
+        url: str,
+        fmt: Optional[str],
+    ) -> str:
+        """Genera un nombre de archivo seguro usando la ROM y su formato."""
+        base = rom_name or label or os.path.basename(url) or "archivo"
+        ext = (fmt or "").strip().lstrip(".")
+        if ext and not base.lower().endswith(f".{ext.lower()}"):
+            base = f"{base}.{ext}"
+        elif not os.path.splitext(base)[1]:
+            base = f"{base}.bin"
+        return safe_filename(base)
+
     def _enqueue_selected(self) -> None:
         """Añade las filas seleccionadas en la tabla de búsqueda a la cola de descargas."""
         save_dir = self.le_dir.text().strip()
@@ -426,17 +442,20 @@ class MainWindow(QMainWindow):
             return
         for idx in indexes:
             r = self.model.getRow(idx.row())
-            base = r["label"] or r["rom_name"] or os.path.basename(r["url"]) or "archivo.bin"
-            name = safe_filename(base)
+            label = r["label"] if "label" in r.keys() else None
+            rom_name = r["rom_name"] if "rom_name" in r.keys() else None
+            fmt_val = r["fmt"] if "fmt" in r.keys() else None
+            base_display = rom_name or label or os.path.basename(r["url"]) or "archivo"
+            name = self._build_download_name(label, rom_name, r["url"], fmt_val)
             expected_hash = r["hash"] if "hash" in r.keys() else None
             item = DownloadItem(name=name, url=r["url"], dest_dir=save_dir, expected_hash=expected_hash)
             # Preparar un diccionario para mostrar el nombre de la ROM en la tabla
             row_data = {
                 'server': r['server'] or '',
-                'fmt': r['fmt'] or '',
+                'fmt': fmt_val or '',
                 'size': r['size'] or '',
-                'display_name': r['rom_name'] or base,
-                'rom_name': r['rom_name'] or base,
+                'display_name': rom_name or base_display,
+                'rom_name': rom_name or base_display,
             }
             self._add_download_row(item, row_data)  # type: ignore[arg-type]
             self.manager.add(item)
@@ -1545,7 +1564,12 @@ class MainWindow(QMainWindow):
             return
         # Crear DownloadItem
         logging.debug("Adding from basket to downloads: ROM %s, server=%s, fmt=%s, lang=%s", group['name'], srv_name, fmt_name, lang_name)
-        name = safe_filename(row_data['label'] or row_data['rom_name'] or os.path.basename(row_data['url']))
+        name = self._build_download_name(
+            row_data.get('label'),
+            row_data.get('rom_name'),
+            row_data['url'],
+            row_data.get('fmt'),
+        )
         dest_dir = self.le_dir.text().strip()
         if not dest_dir:
             QMessageBox.warning(self, "Descargas", "Selecciona una carpeta de descargas en la pestaña de Ajustes.")
