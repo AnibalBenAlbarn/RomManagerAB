@@ -26,7 +26,8 @@ class DownloadSignals(QObject):
     Conjunto de señales para notificar progreso, éxito y fallos durante la descarga.
     """
 
-    progress = pyqtSignal(int, int, float, float, str)  # done, total, speed, eta, status
+    # Use 64-bit integers for progress values to support files larger than 2 GiB
+    progress = pyqtSignal('qint64', 'qint64', float, float, str)  # done, total, speed, eta, status
     finished_ok = pyqtSignal(str)
     failed = pyqtSignal(str)
 
