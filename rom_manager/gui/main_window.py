@@ -688,6 +688,20 @@ class MainWindow(QMainWindow):
         logging.debug("Opening location for %s: %s", it.name, dir_path)
         QDesktopServices.openUrl(QUrl.fromLocalFile(dir_path))
 
+    def _remove_item_files(self, it: DownloadItem) -> None:
+        """Elimina el archivo final y el parcial para un item de descarga."""
+        try:
+            dest_dir = os.path.expanduser(it.dest_dir)
+            filename = safe_filename(it.name)
+            final_path = os.path.join(dest_dir, filename)
+            part_path = final_path + '.part'
+            for path in (final_path, part_path):
+                if os.path.exists(path):
+                    os.remove(path)
+            logging.debug("Deleted files for %s", it.name)
+        except Exception:
+            logging.exception("Error deleting files for %s", it.name)
+
     def _delete_single_item(self, it: DownloadItem) -> None:
         """
         Elimina un único elemento de la tabla de descargas y de la cola. Se
@@ -722,6 +736,7 @@ class MainWindow(QMainWindow):
             logging.debug("Removed item from manager: %s", it.name)
         except Exception:
             logging.exception("Error removing item from manager: %s", it.name)
+        had_task = it.task is not None
         # Desconectar señales del task para evitar actualizaciones después de eliminar
         if it.task is not None:
             try:
@@ -762,20 +777,10 @@ class MainWindow(QMainWindow):
             logging.debug("Removed %s from internal items list", it.name)
         # Eliminar archivos si procede
         if chk_del_file.isChecked():
-            try:
-                dest_dir = it.dest_dir
-                filename = safe_filename(it.name)
-                final_path = os.path.join(dest_dir, filename)
-                part_path = final_path + '.part'
-                # Eliminar archivo final
-                if os.path.exists(final_path):
-                    os.remove(final_path)
-                # Eliminar archivo parcial
-                if os.path.exists(part_path):
-                    os.remove(part_path)
-                logging.debug("Deleted files for %s", it.name)
-            except Exception:
-                logging.exception("Error deleting files for %s", it.name)
+            if had_task:
+                QTimer.singleShot(500, lambda it=it: self._remove_item_files(it))
+            else:
+                self._remove_item_files(it)
         # Guardar sesión después de eliminar
         logging.debug("Saving session after deleting %s", it.name)
         self._save_session_silent()
@@ -822,6 +827,7 @@ class MainWindow(QMainWindow):
                 self.manager.remove(it)
             except Exception:
                 logging.exception("Error removing %s from manager during batch delete", it.name)
+            had_task = it.task is not None
             # Desconectar señales del task para evitar actualizaciones tras la eliminación
             if it.task is not None:
                 try:
@@ -857,18 +863,10 @@ class MainWindow(QMainWindow):
                 logging.debug("Removed %s from internal items list", it.name)
             # Eliminar archivos si procede
             if chk_del_file.isChecked():
-                try:
-                    dest_dir = it.dest_dir
-                    filename = safe_filename(it.name)
-                    final_path = os.path.join(dest_dir, filename)
-                    part_path = final_path + '.part'
-                    if os.path.exists(final_path):
-                        os.remove(final_path)
-                    if os.path.exists(part_path):
-                        os.remove(part_path)
-                    logging.debug("Deleted files for %s", it.name)
-                except Exception:
-                    logging.exception("Error deleting files for %s", it.name)
+                if had_task:
+                    QTimer.singleShot(500, lambda it=it: self._remove_item_files(it))
+                else:
+                    self._remove_item_files(it)
         # Guardar sesión tras eliminación múltiple
         logging.debug("Saving session after batch deletion of %d items", len(items_to_delete))
         self._save_session_silent()
