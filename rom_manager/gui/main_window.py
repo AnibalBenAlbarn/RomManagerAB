@@ -458,11 +458,11 @@ class MainWindow(QMainWindow):
             self.manager.add(item)
             self.items.append(item)
 
-    def _add_download_row(self, item: DownloadItem, src_row: sqlite3.Row) -> None:
+    def _add_download_row(self, item: DownloadItem, src_row: sqlite3.Row, loaded: bool = False) -> None:
         """
         Inserta una nueva fila en la tabla de descargas para el item dado. Configura
-        los botones de pausa, reanudación y cancelación y enlaza las señales del
-        ``DownloadTask`` cuando esté disponible.
+        los botones de pausa, reanudación y cancelación o reinicio y enlaza las señales
+        del ``DownloadTask`` cuando esté disponible.
         """
         row = self.table_dl.rowCount(); self.table_dl.insertRow(row); item.row = row
         logging.debug("Adding download row: item=%s, dest_dir=%s", item.name, item.dest_dir)
@@ -507,7 +507,7 @@ class MainWindow(QMainWindow):
         prog = QProgressBar(); prog.setRange(0, 100); prog.setValue(0); self.table_dl.setCellWidget(row, 5, prog)
         set_item(6, '-')
         set_item(7, '-')
-        # Acciones: añadir botones de Pausar, Reanudar, Cancelar, Eliminar y Abrir
+        # Acciones: añadir botones de Pausar, Reanudar, Cancelar/Reiniciar, Eliminar y Abrir
         w = QWidget(); h = QHBoxLayout(w); h.setContentsMargins(0, 0, 0, 0)
         # Crear botones con iconos para una mejor distinción visual
         b_pause = QPushButton()
@@ -519,7 +519,10 @@ class MainWindow(QMainWindow):
         try:
             b_pause.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_MediaPause))
             b_res.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_MediaPlay))
-            b_can.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogCancelButton))
+            if loaded:
+                b_can.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_BrowserReload))
+            else:
+                b_can.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogCancelButton))
             # Algunas distribuciones pueden no tener SP_TrashIcon, así que usar un ícono alternativo si es necesario
             try:
                 b_del.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_TrashIcon))
@@ -531,7 +534,7 @@ class MainWindow(QMainWindow):
         # Establecer tooltips para cada botón
         b_pause.setToolTip("Pausar descarga")
         b_res.setToolTip("Reanudar descarga")
-        b_can.setToolTip("Cancelar descarga")
+        b_can.setToolTip("Reiniciar descarga" if loaded else "Cancelar descarga")
         b_del.setToolTip("Eliminar descarga")
         b_open.setToolTip("Abrir ubicación")
         # Añadir botones al layout
@@ -541,10 +544,17 @@ class MainWindow(QMainWindow):
         # Conectar señales a acciones apropiadas
         b_pause.clicked.connect(lambda _=False, it=item: self.manager.pause(it))
         b_res.clicked.connect(lambda _=False, it=item: self.manager.resume(it))
-        b_can.clicked.connect(lambda _=False, it=item: self._cancel_item(it))
+        if loaded:
+            b_can.clicked.connect(lambda _=False, it=item, btn=b_can: self._restart_item(it, btn))
+        else:
+            b_can.clicked.connect(lambda _=False, it=item: self._cancel_item(it))
         b_del.clicked.connect(lambda _=False, it=item: self._delete_single_item(it))
         b_open.clicked.connect(lambda _=False, it=item: self._open_item_location(it))
-        # Esperar a que el task esté creado y enlazar señales
+        if not loaded:
+            self._bind_item_signals(item)
+
+    def _bind_item_signals(self, item: DownloadItem) -> None:
+        """Enlaza las señales del ``DownloadTask`` con la interfaz."""
         tmr = QTimer(self); tmr.setInterval(200)
         def bind() -> None:
             if item.task is not None:
@@ -559,6 +569,37 @@ class MainWindow(QMainWindow):
                 )
                 tmr.stop()
         tmr.timeout.connect(bind); tmr.start()
+
+    def _restart_item(self, it: DownloadItem, btn: QPushButton) -> None:
+        """Reinicia la descarga para un elemento previamente cargado."""
+        try:
+            final_path = os.path.join(it.dest_dir, it.name)
+            part_path = final_path + '.part'
+            if os.path.exists(final_path):
+                os.remove(final_path)
+            if os.path.exists(part_path):
+                os.remove(part_path)
+        except Exception:
+            pass
+        if it.row is not None and 0 <= it.row < self.table_dl.rowCount():
+            self.table_dl.item(it.row, 4).setText('En cola')
+            prog: QProgressBar = self.table_dl.cellWidget(it.row, 5)  # type: ignore
+            prog.setValue(0)
+            self.table_dl.item(it.row, 6).setText('-')
+            self.table_dl.item(it.row, 7).setText('-')
+        style = QApplication.style()
+        try:
+            btn.clicked.disconnect()
+        except Exception:
+            pass
+        try:
+            btn.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogCancelButton))
+        except Exception:
+            pass
+        btn.setToolTip('Cancelar descarga')
+        btn.clicked.connect(lambda _=False, it=it: self._cancel_item(it))
+        self.manager.add(it)
+        self._bind_item_signals(it)
 
     def _update_progress(self, it: DownloadItem, done: int, total: int, speed: float, eta: float, status: str) -> None:
         """Actualiza la fila de la tabla de descargas con los valores recibidos."""
@@ -1027,9 +1068,19 @@ class MainWindow(QMainWindow):
                     'fmt': '',
                     'size': '',
                 }
-                self._add_download_row(it, dummy_row)  # type: ignore[arg-type]
-                self.manager.add(it)
+                self._add_download_row(it, dummy_row, loaded=True)  # type: ignore[arg-type]
                 self.items.append(it)
+                final_path = os.path.join(dest_dir, it.name)
+                if os.path.exists(final_path):
+                    if it.row is not None:
+                        self.table_dl.item(it.row, 4).setText('Completado')
+                        prog: QProgressBar = self.table_dl.cellWidget(it.row, 5)  # type: ignore
+                        prog.setValue(100)
+                else:
+                    if it.row is not None:
+                        self.table_dl.item(it.row, 4).setText('Error: fichero no encontrado')
+                        prog: QProgressBar = self.table_dl.cellWidget(it.row, 5)  # type: ignore
+                        prog.setValue(0)
             QMessageBox.information(self, 'Sesión', 'Sesión cargada')
         except Exception as e:
             QMessageBox.critical(self, 'Sesión', str(e))
@@ -1066,9 +1117,19 @@ class MainWindow(QMainWindow):
                     'fmt': '',
                     'size': '',
                 }
-                self._add_download_row(it, dummy_row)  # type: ignore[arg-type]
-                self.manager.add(it)
+                self._add_download_row(it, dummy_row, loaded=True)  # type: ignore[arg-type]
                 self.items.append(it)
+                final_path = os.path.join(dest_dir, it.name)
+                if os.path.exists(final_path):
+                    if it.row is not None:
+                        self.table_dl.item(it.row, 4).setText('Completado')
+                        prog: QProgressBar = self.table_dl.cellWidget(it.row, 5)  # type: ignore
+                        prog.setValue(100)
+                else:
+                    if it.row is not None:
+                        self.table_dl.item(it.row, 4).setText('Error: fichero no encontrado')
+                        prog: QProgressBar = self.table_dl.cellWidget(it.row, 5)  # type: ignore
+                        prog.setValue(0)
         except Exception:
             pass
 
