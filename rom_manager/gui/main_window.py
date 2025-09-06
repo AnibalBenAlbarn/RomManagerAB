@@ -1062,21 +1062,27 @@ class MainWindow(QMainWindow):
                 # Evitar duplicados
                 if any(x.name == name for x in self.items):
                     continue
-                # Añadir una fila en blanco con mínimos
+                final_path = os.path.join(dest_dir, it.name)
+                part_path = final_path + '.part'
                 dummy_row = {
                     'server': '',
                     'fmt': '',
                     'size': '',
                 }
-                self._add_download_row(it, dummy_row, loaded=True)  # type: ignore[arg-type]
-                self.items.append(it)
-                final_path = os.path.join(dest_dir, it.name)
                 if os.path.exists(final_path):
+                    self._add_download_row(it, dummy_row, loaded=True)  # type: ignore[arg-type]
+                    self.items.append(it)
                     if it.row is not None:
                         self.table_dl.item(it.row, 4).setText('Completado')
                         prog: QProgressBar = self.table_dl.cellWidget(it.row, 5)  # type: ignore
                         prog.setValue(100)
+                elif os.path.exists(part_path):
+                    self._add_download_row(it, dummy_row, loaded=False)  # type: ignore[arg-type]
+                    self.items.append(it)
+                    self.manager.add(it)
                 else:
+                    self._add_download_row(it, dummy_row, loaded=True)  # type: ignore[arg-type]
+                    self.items.append(it)
                     if it.row is not None:
                         self.table_dl.item(it.row, 4).setText('Error: fichero no encontrado')
                         prog: QProgressBar = self.table_dl.cellWidget(it.row, 5)  # type: ignore
@@ -1112,20 +1118,27 @@ class MainWindow(QMainWindow):
                 # Evitar duplicados
                 if any(x.name == name for x in self.items):
                     continue
+                final_path = os.path.join(dest_dir, it.name)
+                part_path = final_path + '.part'
                 dummy_row = {
                     'server': '',
                     'fmt': '',
                     'size': '',
                 }
-                self._add_download_row(it, dummy_row, loaded=True)  # type: ignore[arg-type]
-                self.items.append(it)
-                final_path = os.path.join(dest_dir, it.name)
                 if os.path.exists(final_path):
+                    self._add_download_row(it, dummy_row, loaded=True)  # type: ignore[arg-type]
+                    self.items.append(it)
                     if it.row is not None:
                         self.table_dl.item(it.row, 4).setText('Completado')
                         prog: QProgressBar = self.table_dl.cellWidget(it.row, 5)  # type: ignore
                         prog.setValue(100)
+                elif os.path.exists(part_path):
+                    self._add_download_row(it, dummy_row, loaded=False)  # type: ignore[arg-type]
+                    self.items.append(it)
+                    self.manager.add(it)
                 else:
+                    self._add_download_row(it, dummy_row, loaded=True)  # type: ignore[arg-type]
+                    self.items.append(it)
                     if it.row is not None:
                         self.table_dl.item(it.row, 4).setText('Error: fichero no encontrado')
                         prog: QProgressBar = self.table_dl.cellWidget(it.row, 5)  # type: ignore
