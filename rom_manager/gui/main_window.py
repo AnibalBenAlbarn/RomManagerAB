@@ -463,13 +463,13 @@ class MainWindow(QMainWindow):
             }
             self._add_download_row(item, row_data)  # type: ignore[arg-type]
             self.manager.add(item)
+            self._bind_item_signals(item)
             self.items.append(item)
 
     def _add_download_row(self, item: DownloadItem, src_row: sqlite3.Row, loaded: bool = False) -> None:
         """
-        Inserta una nueva fila en la tabla de descargas para el item dado. Configura
-        los botones de pausa, reanudación y cancelación o reinicio y enlaza las señales
-        del ``DownloadTask`` cuando esté disponible.
+        Inserta una nueva fila en la tabla de descargas para el item dado y configura
+        los botones de pausa, reanudación y cancelación o reinicio.
         """
         row = self.table_dl.rowCount(); self.table_dl.insertRow(row); item.row = row
         logging.debug("Adding download row: item=%s, dest_dir=%s", item.name, item.dest_dir)
@@ -557,25 +557,30 @@ class MainWindow(QMainWindow):
             b_can.clicked.connect(lambda _=False, it=item: self._cancel_item(it))
         b_del.clicked.connect(lambda _=False, it=item: self._delete_single_item(it))
         b_open.clicked.connect(lambda _=False, it=item: self._open_item_location(it))
-        if not loaded:
-            self._bind_item_signals(item)
 
     def _bind_item_signals(self, item: DownloadItem) -> None:
         """Enlaza las señales del ``DownloadTask`` con la interfaz."""
-        tmr = QTimer(self); tmr.setInterval(200)
-        def bind() -> None:
-            if item.task is not None:
-                item.task.signals.progress.connect(
-                    lambda d, t, s, eta, st, it=item: self._update_progress(it, d, t, s, eta, st)
-                )
-                item.task.signals.finished_ok.connect(
-                    lambda p, it=item: self._on_done(it, True, p)
-                )
-                item.task.signals.failed.connect(
-                    lambda m, it=item: self._on_done(it, False, m)
-                )
-                tmr.stop()
-        tmr.timeout.connect(bind); tmr.start()
+
+        def do_bind() -> bool:
+            if item.task is None:
+                return False
+            item.task.signals.progress.connect(
+                lambda d, t, s, eta, st, it=item: self._update_progress(it, d, t, s, eta, st)
+            )
+            item.task.signals.finished_ok.connect(
+                lambda p, it=item: self._on_done(it, True, p)
+            )
+            item.task.signals.failed.connect(
+                lambda m, it=item: self._on_done(it, False, m)
+            )
+            return True
+
+        if not do_bind():
+            tmr = QTimer(self)
+            tmr.setInterval(200)
+            tmr.timeout.connect(lambda: do_bind() and tmr.stop())
+            setattr(item, "_bind_timer", tmr)
+            tmr.start()
 
     def _restart_item(self, it: DownloadItem, btn: QPushButton) -> None:
         """Reinicia la descarga para un elemento previamente cargado."""
@@ -1085,6 +1090,8 @@ class MainWindow(QMainWindow):
                     self._add_download_row(it, dummy_row, loaded=False)  # type: ignore[arg-type]
                     self.items.append(it)
                     self.manager.add(it)
+                    self._bind_item_signals(it)
+                    self._bind_item_signals(it)
                 else:
                     self._add_download_row(it, dummy_row, loaded=True)  # type: ignore[arg-type]
                     self.items.append(it)
@@ -1665,6 +1672,7 @@ class MainWindow(QMainWindow):
         }
         self._add_download_row(download_item, src_row)  # type: ignore[arg-type]
         self.manager.add(download_item)
+        self._bind_item_signals(download_item)
         self.items.append(download_item)
         # Quitar de la cesta y refrescar
         del self.basket_items[rom_id]
