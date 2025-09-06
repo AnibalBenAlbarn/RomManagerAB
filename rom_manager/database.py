@@ -137,6 +137,8 @@ class Database:
             links.id            AS link_id,
             roms.id             AS rom_id,
             roms.name           AS rom_name,
+            roms.system_id      AS system_id,
+            systems.name        AS system_name,
             links.server_name   AS server,
             links.fmt           AS fmt,
             links.size          AS size,
@@ -146,6 +148,7 @@ class Database:
             links.label         AS label
         FROM links
         JOIN roms    ON roms.id = links.rom_id
+        JOIN systems ON systems.id = roms.system_id
         LEFT JOIN link_languages ON link_languages.link_id = links.id
         LEFT JOIN languages      ON languages.id = link_languages.language_id
         WHERE {" AND ".join(where)}
@@ -155,4 +158,38 @@ class Database:
         """
         params.append(limit)
         cur = self.conn.execute(sql, params)
+        return cur.fetchall()
+
+    def get_links_by_rom(self, rom_id: int) -> List[sqlite3.Row]:
+        """Obtiene todos los links asociados a una ROM específica."""
+        assert self.conn
+        hash_select = (
+            "links.hash          AS hash,"
+            if self._has_links_hash
+            else "NULL               AS hash,"
+        )
+        sql = f"""
+        SELECT
+            links.id            AS link_id,
+            roms.id             AS rom_id,
+            roms.name           AS rom_name,
+            roms.system_id      AS system_id,
+            systems.name        AS system_name,
+            links.server_name   AS server,
+            links.fmt           AS fmt,
+            links.size          AS size,
+            {hash_select}
+            COALESCE(GROUP_CONCAT(languages.code, ','), links.languages) AS langs,
+            links.url           AS url,
+            links.label         AS label
+        FROM links
+        JOIN roms    ON roms.id = links.rom_id
+        JOIN systems ON systems.id = roms.system_id
+        LEFT JOIN link_languages ON link_languages.link_id = links.id
+        LEFT JOIN languages      ON languages.id = link_languages.language_id
+        WHERE roms.id = ?
+        GROUP BY links.id
+        ORDER BY links.id
+        """
+        cur = self.conn.execute(sql, (rom_id,))
         return cur.fetchall()

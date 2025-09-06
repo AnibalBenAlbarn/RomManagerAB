@@ -218,6 +218,7 @@ class MainWindow(QMainWindow):
         # Grupo de filtros y búsqueda
         filters = QGroupBox("Búsqueda y filtros"); f = QGridLayout(filters)
         self.le_search = QLineEdit(); self.le_search.setPlaceholderText("Buscar por ROM/etiqueta/servidor…")
+        self.le_search.returnPressed.connect(self._run_search)
         self.cmb_system = QComboBox(); self.cmb_lang = QComboBox(); self.cmb_region = QComboBox(); self.cmb_fmt = QComboBox()
         self.btn_search = QPushButton("Buscar"); self.btn_search.clicked.connect(self._run_search)
         f.addWidget(QLabel("Texto:"),0,0); f.addWidget(self.le_search,0,1)
@@ -246,6 +247,9 @@ class MainWindow(QMainWindow):
         ])
         self.table_basket.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         lay.addWidget(self.table_basket)
+        self.btn_basket_add_all = QPushButton("Añadir todo a descargas")
+        self.btn_basket_add_all.clicked.connect(self._basket_add_all_to_downloads)
+        lay.addWidget(self.btn_basket_add_all)
 
         # Inicializar la cesta vacía
         self._refresh_basket_table()
@@ -378,7 +382,7 @@ class MainWindow(QMainWindow):
         groups: dict[int, dict] = {}
         for r in rows:
             rom_id = r["rom_id"]
-            group = groups.setdefault(rom_id, {"name": r["rom_name"], "rows": []})
+            group = groups.setdefault(rom_id, {"name": r["rom_name"], "rows": [], "system_name": r["system_name"]})
             group["rows"].append(r)
         # Para cada grupo, calcular listas de servidores, formatos y idiomas
         for rom_id, group in groups.items():
@@ -452,7 +456,12 @@ class MainWindow(QMainWindow):
             base_display = rom_name or label or os.path.basename(r["url"]) or "archivo"
             name = self._build_download_name(r["url"])
             expected_hash = r["hash"] if "hash" in r.keys() else None
-            item = DownloadItem(name=name, url=r["url"], dest_dir=save_dir, expected_hash=expected_hash)
+            dest_dir = save_dir
+            if self.chk_create_sys_dirs.isChecked():
+                sys_name = r["system_name"] if "system_name" in r.keys() else ""
+                if sys_name:
+                    dest_dir = os.path.join(dest_dir, safe_filename(sys_name))
+            item = DownloadItem(name=name, url=r["url"], dest_dir=dest_dir, expected_hash=expected_hash)
             # Preparar un diccionario para mostrar el nombre de la ROM en la tabla
             row_data = {
                 'server': r['server'] or '',
@@ -1233,7 +1242,8 @@ class MainWindow(QMainWindow):
                 group_rows = links
                 group = {
                     'name': links[0]['rom_name'],
-                    'rows': group_rows
+                    'rows': group_rows,
+                    'system_name': links[0].get('system_name', '')
                 }
                 # Servidores únicos
                 servers = sorted(set((row['server'] or '') for row in group_rows))
@@ -1619,6 +1629,48 @@ class MainWindow(QMainWindow):
             return
         item['selected_lang'] = combo.currentIndex()
 
+    def _process_basket_item_to_downloads(self, rom_id: int, base_dir: str) -> None:
+        """Convierte un elemento de la cesta en una descarga."""
+        if rom_id not in self.basket_items:
+            return
+        item = self.basket_items[rom_id]
+        group = item['group']
+        srv_idx = item.get('selected_server', 0)
+        srv_name = group['servers'][srv_idx] if group['servers'] else ""
+        fmt_idx = item.get('selected_format', 0)
+        fmt_list = group['formats_by_server'].get(srv_name, [])
+        fmt_name = fmt_list[fmt_idx] if fmt_list and fmt_idx < len(fmt_list) else ""
+        lang_idx = item.get('selected_lang', 0)
+        lang_list = group['langs_by_server_format'].get((srv_name, fmt_name), [])
+        lang_name = lang_list[lang_idx] if lang_list and lang_idx < len(lang_list) else ""
+        row_data = group['link_lookup'].get((srv_name, fmt_name, lang_name))
+        if not row_data:
+            return
+        logging.debug(
+            "Adding from basket to downloads: ROM %s, server=%s, fmt=%s, lang=%s",
+            group['name'], srv_name, fmt_name, lang_name,
+        )
+        final_dir = base_dir
+        if self.chk_create_sys_dirs.isChecked():
+            sys_name = group.get('system_name', '')
+            if sys_name:
+                final_dir = os.path.join(final_dir, safe_filename(sys_name))
+        name = self._build_download_name(row_data['url'])
+        expected_hash = row_data['hash'] if 'hash' in row_data.keys() else None
+        download_item = DownloadItem(name=name, url=row_data['url'], dest_dir=final_dir, expected_hash=expected_hash)
+        src_row = {
+            'server': row_data['server'] or '',
+            'fmt': row_data['fmt'] or '',
+            'size': row_data['size'] or '',
+            'display_name': row_data['rom_name'] or group['name'],
+            'rom_name': row_data['rom_name'] or group['name'],
+        }
+        self._add_download_row(download_item, src_row)  # type: ignore[arg-type]
+        self.manager.add(download_item)
+        self._bind_item_signals(download_item)
+        self.items.append(download_item)
+        del self.basket_items[rom_id]
+
     def _basket_add_to_downloads(self) -> None:
         """
         Añade la ROM seleccionada desde la cesta a la cola de descargas y la
@@ -1631,51 +1683,21 @@ class MainWindow(QMainWindow):
         rom_id = btn.property('rom_id')
         if rom_id is None:
             return
-        if rom_id not in self.basket_items:
-            return
-        item = self.basket_items[rom_id]
-        group = item['group']
-        # Obtener selección
-        srv_idx = item.get('selected_server', 0)
-        srv_name = group['servers'][srv_idx] if group['servers'] else ""
-        fmt_idx = item.get('selected_format', 0)
-        fmt_list = group['formats_by_server'].get(srv_name, [])
-        fmt_name = fmt_list[fmt_idx] if fmt_list and fmt_idx < len(fmt_list) else ""
-        lang_idx = item.get('selected_lang', 0)
-        lang_list = group['langs_by_server_format'].get((srv_name, fmt_name), [])
-        lang_name = lang_list[lang_idx] if lang_list and lang_idx < len(lang_list) else ""
-        row_data = group['link_lookup'].get((srv_name, fmt_name, lang_name))
-        if not row_data:
-            return
-        # Crear DownloadItem
-        logging.debug(
-            "Adding from basket to downloads: ROM %s, server=%s, fmt=%s, lang=%s",
-            group['name'],
-            srv_name,
-            fmt_name,
-            lang_name,
-        )
-        name = self._build_download_name(row_data['url'])
         dest_dir = self.le_dir.text().strip()
         if not dest_dir:
             QMessageBox.warning(self, "Descargas", "Selecciona una carpeta de descargas en la pestaña de Ajustes.")
             return
-        expected_hash = row_data['hash'] if 'hash' in row_data.keys() else None
-        download_item = DownloadItem(name=name, url=row_data['url'], dest_dir=dest_dir, expected_hash=expected_hash)
-        src_row = {
-            'server': row_data['server'] or '',
-            'fmt': row_data['fmt'] or '',
-            'size': row_data['size'] or '',
-            # Almacenar nombre amigable para mostrar en descargas
-            'display_name': row_data['rom_name'] or group['name'],
-            'rom_name': row_data['rom_name'] or group['name'],
-        }
-        self._add_download_row(download_item, src_row)  # type: ignore[arg-type]
-        self.manager.add(download_item)
-        self._bind_item_signals(download_item)
-        self.items.append(download_item)
-        # Quitar de la cesta y refrescar
-        del self.basket_items[rom_id]
+        self._process_basket_item_to_downloads(int(rom_id), dest_dir)
+        self._refresh_basket_table()
+
+    def _basket_add_all_to_downloads(self) -> None:
+        """Añade todas las ROM de la cesta a la cola de descargas."""
+        dest_dir = self.le_dir.text().strip()
+        if not dest_dir:
+            QMessageBox.warning(self, "Descargas", "Selecciona una carpeta de descargas en la pestaña de Ajustes.")
+            return
+        for rom_id in list(self.basket_items.keys()):
+            self._process_basket_item_to_downloads(rom_id, dest_dir)
         self._refresh_basket_table()
 
     def _basket_remove_item(self) -> None:
@@ -1775,6 +1797,7 @@ class MainWindow(QMainWindow):
                     "selected_server": self._default_server_index(servers),
                     "selected_format": 0,
                     "selected_lang": 0,
+                    "system_name": links[0].get('system_name', ''),
                 }
             sel_srv = group.get('selected_server', 0)
             self.basket_items[rom_id] = {
