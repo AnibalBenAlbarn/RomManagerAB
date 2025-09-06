@@ -344,6 +344,13 @@ class MainWindow(QMainWindow):
         self.cmb_region.clear(); [self.cmb_region.addItem(c, i) for i,c in self.db.get_regions()]
         self.cmb_fmt.clear();    [self.cmb_fmt.addItem(x) for x in self.db.get_formats()]
 
+    def _default_server_index(self, servers: List[str]) -> int:
+        """Devuelve el índice de 'myrient' si está en la lista de servidores."""
+        for idx, srv in enumerate(servers):
+            if srv.lower() == "myrient":
+                return idx
+        return 0
+
     def _run_search(self) -> None:
         """
         Ejecuta la búsqueda en la base de datos según el texto y filtros seleccionados.
@@ -413,7 +420,7 @@ class MainWindow(QMainWindow):
             group["formats_by_server"] = formats_by_server
             group["langs_by_server_format"] = langs_by_server_format
             group["link_lookup"] = link_lookup
-            group["selected_server"] = 0
+            group["selected_server"] = self._default_server_index(servers)
             group["selected_format"] = 0
             group["selected_lang"] = 0
         self.search_groups = groups
@@ -1254,16 +1261,16 @@ class MainWindow(QMainWindow):
                 group['formats_by_server'] = formats_by_server
                 group['langs_by_server_format'] = langs_by_server_format
                 group['link_lookup'] = link_lookup
-                group['selected_server'] = 0
+                group['selected_server'] = self._default_server_index(servers)
                 group['selected_format'] = 0
                 group['selected_lang'] = 0
                 # Ajustar índices guardados
-                sel_srv = d.get('selected_server', 0)
+                sel_srv = d.get('selected_server', group['selected_server'])
                 sel_fmt = d.get('selected_format', 0)
                 sel_lang = d.get('selected_lang', 0)
                 # Validar índices
                 if sel_srv is None or sel_srv >= len(servers) or sel_srv < 0:
-                    sel_srv = 0
+                    sel_srv = group['selected_server']
                 server_name = servers[sel_srv] if servers else ''
                 fmt_list = formats_by_server.get(server_name, [])
                 if sel_fmt is None or sel_fmt >= len(fmt_list) or sel_fmt < 0:
@@ -1759,15 +1766,16 @@ class MainWindow(QMainWindow):
                     "formats_by_server": formats_by_server,
                     "langs_by_server_format": langs_by_server_format,
                     "link_lookup": link_lookup,
-                    "selected_server": 0,
+                    "selected_server": self._default_server_index(servers),
                     "selected_format": 0,
                     "selected_lang": 0,
                 }
+            sel_srv = group.get('selected_server', 0)
             self.basket_items[rom_id] = {
                 'name': rom_name,
                 'links': links,
                 'group': group,
-                'selected_server': 0,
+                'selected_server': sel_srv,
                 'selected_format': 0,
                 'selected_lang': 0,
             }
