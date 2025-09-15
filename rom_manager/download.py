@@ -266,6 +266,7 @@ class DownloadItem:
     url: str
     dest_dir: str
     expected_hash: Optional[str] = None
+    system_name: str = ""
     task: Optional[DownloadTask] = None
     row: Optional[int] = None
 

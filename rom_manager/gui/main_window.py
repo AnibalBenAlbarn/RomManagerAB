@@ -8,6 +8,7 @@ import json
 import logging
 import sqlite3
 import math
+import shutil
 from typing import Optional, List
 
 from PyQt6.QtCore import Qt, QThreadPool, QTimer, QSettings, QUrl, QEvent, QObject
@@ -130,15 +131,19 @@ class MainWindow(QMainWindow):
         self.le_dir = QLineEdit(); self.btn_dir = QPushButton("Elegir…"); self.btn_dir.clicked.connect(self._choose_dir)
         self.spin_conc = QSpinBox(); self.spin_conc.setRange(1,5); self.spin_conc.setValue(3)
         self.spin_conc.valueChanged.connect(lambda v: self.manager.set_max_concurrent(v))
+        self.chk_extract_after = QCheckBox("Descomprimir al finalizar")
         self.chk_delete_after = QCheckBox("Eliminar archivo tras descompresión")
+        self.chk_delete_after.setEnabled(False)
+        self.chk_extract_after.toggled.connect(lambda v: self.chk_delete_after.setEnabled(v))
         self.chk_create_sys_dirs = QCheckBox("Crear carpetas por sistema")
         self.btn_recommended = QPushButton("Usar ajustes recomendados para máxima velocidad")
         self.btn_recommended.clicked.connect(lambda: (self.spin_conc.setValue(5)))
         g.addWidget(QLabel("Carpeta descargas:"),0,0); g.addWidget(self.le_dir,0,1); g.addWidget(self.btn_dir,0,2)
         g.addWidget(QLabel("Concurrencia (1–5):"),1,0); g.addWidget(self.spin_conc,1,1)
-        g.addWidget(self.chk_delete_after,2,0,1,3)
-        g.addWidget(self.chk_create_sys_dirs,3,0,1,3)
-        g.addWidget(self.btn_recommended,4,0,1,3)
+        g.addWidget(self.chk_extract_after,2,0,1,3)
+        g.addWidget(self.chk_delete_after,3,0,1,3)
+        g.addWidget(self.chk_create_sys_dirs,4,0,1,3)
+        g.addWidget(self.btn_recommended,5,0,1,3)
         lay.addWidget(box)
         # Persistencia de sesión
         sess = QGroupBox("Sesión de descargas"); h = QHBoxLayout(sess)
@@ -181,15 +186,19 @@ class MainWindow(QMainWindow):
         self.btn_dir.clicked.connect(self._choose_dir)
         self.spin_conc = QSpinBox(); self.spin_conc.setRange(1, 5); self.spin_conc.setValue(3)
         self.spin_conc.valueChanged.connect(lambda v: self.manager.set_max_concurrent(v))
+        self.chk_extract_after = QCheckBox("Descomprimir al finalizar")
         self.chk_delete_after = QCheckBox("Eliminar archivo tras descompresión")
+        self.chk_delete_after.setEnabled(False)
+        self.chk_extract_after.toggled.connect(lambda v: self.chk_delete_after.setEnabled(v))
         self.chk_create_sys_dirs = QCheckBox("Crear carpetas por sistema")
         self.btn_recommended = QPushButton("Usar ajustes recomendados para máxima velocidad")
         self.btn_recommended.clicked.connect(lambda: (self.spin_conc.setValue(5)))
         grid_dl.addWidget(QLabel("Carpeta descargas:"), 0, 0); grid_dl.addWidget(self.le_dir, 0, 1); grid_dl.addWidget(self.btn_dir, 0, 2)
         grid_dl.addWidget(QLabel("Concurrencia (1–5):"), 1, 0); grid_dl.addWidget(self.spin_conc, 1, 1)
-        grid_dl.addWidget(self.chk_delete_after, 2, 0, 1, 3)
-        grid_dl.addWidget(self.chk_create_sys_dirs, 3, 0, 1, 3)
-        grid_dl.addWidget(self.btn_recommended, 4, 0, 1, 3)
+        grid_dl.addWidget(self.chk_extract_after, 2, 0, 1, 3)
+        grid_dl.addWidget(self.chk_delete_after, 3, 0, 1, 3)
+        grid_dl.addWidget(self.chk_create_sys_dirs, 4, 0, 1, 3)
+        grid_dl.addWidget(self.btn_recommended, 5, 0, 1, 3)
         lay.addWidget(gb_dl)
 
         # Grupo de sesión de descargas
@@ -229,10 +238,10 @@ class MainWindow(QMainWindow):
         f.addWidget(self.btn_search,0,2,5,1)
         lay.addWidget(filters)
 
-        # Tabla de resultados agrupados: columnas ROM, Servidor, Formato, Idiomas, Acciones
-        self.table_results = QTableWidget(0, 5)
+        # Tabla de resultados agrupados: columnas ROM, Sistema, Servidor, Formato, Idiomas, Acciones
+        self.table_results = QTableWidget(0, 6)
         self.table_results.setHorizontalHeaderLabels([
-            "ROM", "Servidor", "Formato", "Idiomas", "Acciones"
+            "ROM", "Sistema", "Servidor", "Formato", "Idiomas", "Acciones"
         ])
         self.table_results.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         lay.addWidget(self.table_results)
@@ -241,9 +250,9 @@ class MainWindow(QMainWindow):
         basket_label = QLabel("Cesta de descargas")
         basket_label.setStyleSheet("font-weight: bold; margin-top: 8px;")
         lay.addWidget(basket_label)
-        self.table_basket = QTableWidget(0, 5)
+        self.table_basket = QTableWidget(0, 6)
         self.table_basket.setHorizontalHeaderLabels([
-            "ROM", "Servidor", "Formato", "Idioma", "Acciones"
+            "ROM", "Sistema", "Servidor", "Formato", "Idioma", "Acciones"
         ])
         self.table_basket.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         lay.addWidget(self.table_basket)
@@ -258,10 +267,10 @@ class MainWindow(QMainWindow):
     def _build_downloads_tab(self) -> None:
         lay = QVBoxLayout(self.tab_downloads)
         logging.debug("Building downloads tab with progress table.")
-        # Tabla con columnas: Nombre, Servidor, Formato, Tamaño, Estado, Progreso, Velocidad, ETA, Acciones
+        # Tabla con columnas: Nombre, Sistema, Formato, Tamaño, Estado, Progreso, Velocidad, ETA, Acciones
         self.table_dl = QTableWidget(0, 9)
         self.table_dl.setHorizontalHeaderLabels([
-            "Nombre", "Servidor", "Formato", "Tamaño", "Estado", "Progreso", "Velocidad", "ETA", "Acciones"
+            "Nombre", "Sistema", "Formato", "Tamaño", "Estado", "Progreso", "Velocidad", "ETA", "Acciones"
         ])
         # Ajustar la anchura de las columnas de manera que la de acciones se adapte al contenido
         self.table_dl.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -457,16 +466,17 @@ class MainWindow(QMainWindow):
             name = self._build_download_name(r["url"])
             expected_hash = r["hash"] if "hash" in r.keys() else None
             dest_dir = save_dir
+            sys_name = r["system_name"] if "system_name" in r.keys() else ""
             if self.chk_create_sys_dirs.isChecked():
-                sys_name = r["system_name"] if "system_name" in r.keys() else ""
                 if sys_name:
                     dest_dir = os.path.join(dest_dir, safe_filename(sys_name))
-            item = DownloadItem(name=name, url=r["url"], dest_dir=dest_dir, expected_hash=expected_hash)
+            item = DownloadItem(name=name, url=r["url"], dest_dir=dest_dir, expected_hash=expected_hash, system_name=sys_name)
             # Preparar un diccionario para mostrar el nombre de la ROM en la tabla
             row_data = {
                 'server': r['server'] or '',
                 'fmt': fmt_val or '',
                 'size': r['size'] or '',
+                'system_name': sys_name,
                 'display_name': rom_name or base_display,
                 'rom_name': rom_name or base_display,
             }
@@ -500,23 +510,25 @@ class MainWindow(QMainWindow):
         if not display_name:
             display_name = item.name
         set_item(0, display_name)
-        # Servidor, formato y tamaño
+        # Sistema, formato y tamaño
         # src_row puede ser dict o Row; utilizar get si es dict
-        server = ''
+        system = ''
         fmt = ''
         size = ''
         if isinstance(src_row, dict):
-            server = src_row.get('server', '') or ''
+            system = src_row.get('system_name', '') or ''
             fmt = src_row.get('fmt', '') or ''
             size = src_row.get('size', '') or ''
         elif hasattr(src_row, '__getitem__'):
             try:
-                server = src_row["server"] or ''
+                system = src_row["system_name"] or ''
                 fmt = src_row["fmt"] or ''
                 size = src_row["size"] or ''
             except Exception:
                 pass
-        set_item(1, server)
+        if not system:
+            system = getattr(item, 'system_name', '')
+        set_item(1, system)
         set_item(2, fmt)
         set_item(3, size)
         set_item(4, "En cola")
@@ -651,6 +663,20 @@ class MainWindow(QMainWindow):
         else:
             self.table_dl.item(it.row, 4).setText("Completado" if ok else f"Error: {msg}")
             logging.debug("Download finished for %s: ok=%s, msg=%s", it.name, ok, msg)
+        # Descomprimir si está habilitado y no es sistema MAME
+        if ok and self.chk_extract_after.isChecked():
+            system = getattr(it, 'system_name', '')
+            if 'mame' not in system.lower():
+                dest_file = os.path.join(it.dest_dir, safe_filename(it.name))
+                try:
+                    shutil.unpack_archive(dest_file, it.dest_dir)
+                    if self.chk_delete_after.isChecked():
+                        try:
+                            os.remove(dest_file)
+                        except Exception:
+                            logging.exception("Error deleting archive %s", dest_file)
+                except Exception:
+                    logging.exception("Error extracting %s", dest_file)
 
     def _cancel_item(self, it: DownloadItem) -> None:
         """
@@ -1055,7 +1081,16 @@ class MainWindow(QMainWindow):
 
     def _save_session(self) -> None:
         """Guarda la sesión actual de descargas a disco."""
-        data = [{"name": it.name, "url": it.url, "dest": it.dest_dir, "hash": it.expected_hash} for it in self.items]
+        data = [
+            {
+                "name": it.name,
+                "url": it.url,
+                "dest": it.dest_dir,
+                "hash": it.expected_hash,
+                "system": getattr(it, 'system_name', ''),
+            }
+            for it in self.items
+        ]
         try:
             with open(self._session_path(), 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
@@ -1075,16 +1110,17 @@ class MainWindow(QMainWindow):
             for d in data:
                 name = d.get('name'); url = d.get('url'); dest_dir = d.get('dest') or self.le_dir.text().strip()
                 expected_hash = d.get('hash')
+                system = d.get('system', '')
                 if not (name and url and dest_dir):
                     continue
-                it = DownloadItem(name=name, url=url, dest_dir=dest_dir, expected_hash=expected_hash)
+                it = DownloadItem(name=name, url=url, dest_dir=dest_dir, expected_hash=expected_hash, system_name=system)
                 # Evitar duplicados
                 if any(x.name == name for x in self.items):
                     continue
                 final_path = os.path.join(dest_dir, it.name)
                 part_path = final_path + '.part'
                 dummy_row = {
-                    'server': '',
+                    'system_name': system,
                     'fmt': '',
                     'size': '',
                 }
@@ -1116,7 +1152,16 @@ class MainWindow(QMainWindow):
     def _save_session_silent(self) -> None:
         """Guarda la sesión actual de descargas en el fichero sin mostrar diálogos."""
         try:
-            data = [{"name": it.name, "url": it.url, "dest": it.dest_dir, "hash": it.expected_hash} for it in self.items]
+            data = [
+                {
+                    "name": it.name,
+                    "url": it.url,
+                    "dest": it.dest_dir,
+                    "hash": it.expected_hash,
+                    "system": getattr(it, 'system_name', ''),
+                }
+                for it in self.items
+            ]
             with open(self._session_path(), 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception:
@@ -1133,16 +1178,17 @@ class MainWindow(QMainWindow):
             for d in data:
                 name = d.get('name'); url = d.get('url'); dest_dir = d.get('dest') or self.le_dir.text().strip()
                 expected_hash = d.get('hash')
+                system = d.get('system', '')
                 if not (name and url and dest_dir):
                     continue
-                it = DownloadItem(name=name, url=url, dest_dir=dest_dir, expected_hash=expected_hash)
+                it = DownloadItem(name=name, url=url, dest_dir=dest_dir, expected_hash=expected_hash, system_name=system)
                 # Evitar duplicados
                 if any(x.name == name for x in self.items):
                     continue
                 final_path = os.path.join(dest_dir, it.name)
                 part_path = final_path + '.part'
                 dummy_row = {
-                    'server': '',
+                    'system_name': system,
                     'fmt': '',
                     'size': '',
                 }
@@ -1175,6 +1221,7 @@ class MainWindow(QMainWindow):
             settings.setValue('db_path', self.le_db.text().strip())
             settings.setValue('download_dir', self.le_dir.text().strip())
             settings.setValue('concurrency', self.spin_conc.value())
+            settings.setValue('chk_extract_after', self.chk_extract_after.isChecked())
             settings.setValue('chk_delete_after', self.chk_delete_after.isChecked())
             settings.setValue('chk_create_sys_dirs', self.chk_create_sys_dirs.isChecked())
             # Guardar cesta
@@ -1201,12 +1248,15 @@ class MainWindow(QMainWindow):
             db_path = settings.value('db_path', '', type=str)
             download_dir = settings.value('download_dir', '', type=str)
             conc = settings.value('concurrency', 3, type=int)
+            chk_extract = settings.value('chk_extract_after', False, type=bool)
             chk_del = settings.value('chk_delete_after', False, type=bool)
             chk_sys = settings.value('chk_create_sys_dirs', False, type=bool)
             self.le_db.setText(db_path)
             self.le_dir.setText(download_dir)
             self.spin_conc.setValue(conc)
+            self.chk_extract_after.setChecked(chk_extract)
             self.chk_delete_after.setChecked(chk_del)
+            self.chk_delete_after.setEnabled(chk_extract)
             self.chk_create_sys_dirs.setChecked(chk_sys)
             # Restaurar archivo de sesión
             if download_dir:
@@ -1330,7 +1380,10 @@ class MainWindow(QMainWindow):
             rom_item = QTableWidgetItem(item['name'])
             rom_item.setData(Qt.ItemDataRole.UserRole, rom_id)
             self.table_basket.setItem(row, 0, rom_item)
-            # Columna 1: selector de servidor
+            # Columna 1: sistema
+            sys_item = QTableWidgetItem(item['group'].get('system_name', '') or '')
+            self.table_basket.setItem(row, 1, sys_item)
+            # Columna 2: selector de servidor
             combo_srv = QComboBox()
             for srv in item['group']['servers']:
                 combo_srv.addItem(srv or "")
@@ -1340,8 +1393,8 @@ class MainWindow(QMainWindow):
             combo_srv.setProperty('row_idx', row)
             combo_srv.setProperty('rom_id', rom_id)
             combo_srv.currentIndexChanged.connect(self._basket_server_changed)
-            self.table_basket.setCellWidget(row, 1, combo_srv)
-            # Columna 2: selector de formato (depende del servidor)
+            self.table_basket.setCellWidget(row, 2, combo_srv)
+            # Columna 3: selector de formato (depende del servidor)
             combo_fmt = QComboBox()
             # Obtener el servidor actualmente seleccionado
             srv_name = item['group']['servers'][srv_idx] if item['group']['servers'] else ""
@@ -1354,8 +1407,8 @@ class MainWindow(QMainWindow):
             combo_fmt.setProperty('row_idx', row)
             combo_fmt.setProperty('rom_id', rom_id)
             combo_fmt.currentIndexChanged.connect(self._basket_format_changed)
-            self.table_basket.setCellWidget(row, 2, combo_fmt)
-            # Columna 3: selector de idiomas (depende de servidor y formato)
+            self.table_basket.setCellWidget(row, 3, combo_fmt)
+            # Columna 4: selector de idiomas (depende de servidor y formato)
             combo_lang = QComboBox()
             fmt_name = fmt_list[fmt_idx] if fmt_list and fmt_idx < len(fmt_list) else ""
             lang_list = item['group']['langs_by_server_format'].get((srv_name, fmt_name), [])
@@ -1367,8 +1420,8 @@ class MainWindow(QMainWindow):
             combo_lang.setProperty('row_idx', row)
             combo_lang.setProperty('rom_id', rom_id)
             combo_lang.currentIndexChanged.connect(self._basket_language_changed)
-            self.table_basket.setCellWidget(row, 3, combo_lang)
-            # Columna 4: botones de acción (Añadir, Eliminar)
+            self.table_basket.setCellWidget(row, 4, combo_lang)
+            # Columna 5: botones de acción (Añadir, Eliminar)
             w = QWidget(); h = QHBoxLayout(w); h.setContentsMargins(0, 0, 0, 0)
             btn_add = QPushButton("Añadir")
             btn_remove = QPushButton("Eliminar")
@@ -1379,7 +1432,7 @@ class MainWindow(QMainWindow):
             btn_add.clicked.connect(self._basket_add_to_downloads)
             btn_remove.clicked.connect(self._basket_remove_item)
             h.addWidget(btn_add); h.addWidget(btn_remove)
-            self.table_basket.setCellWidget(row, 4, w)
+            self.table_basket.setCellWidget(row, 5, w)
 
     # --- Resultados agrupados ---
     def _display_grouped_results(self) -> None:
@@ -1401,7 +1454,10 @@ class MainWindow(QMainWindow):
             rom_item = QTableWidgetItem(group["name"])
             rom_item.setData(Qt.ItemDataRole.UserRole, rom_id)
             self.table_results.setItem(row, 0, rom_item)
-            # Columna 1: selector de servidor
+            # Columna 1: sistema
+            sys_item = QTableWidgetItem(group.get("system_name", "") or "")
+            self.table_results.setItem(row, 1, sys_item)
+            # Columna 2: selector de servidor
             combo_srv = QComboBox()
             for srv in group["servers"]:
                 combo_srv.addItem(srv or "")
@@ -1410,8 +1466,8 @@ class MainWindow(QMainWindow):
             combo_srv.setProperty('rom_id', rom_id)
             combo_srv.setProperty('row_idx', row)
             combo_srv.currentIndexChanged.connect(self._group_server_changed)
-            self.table_results.setCellWidget(row, 1, combo_srv)
-            # Columna 2: selector de formato (depende del servidor)
+            self.table_results.setCellWidget(row, 2, combo_srv)
+            # Columna 3: selector de formato (depende del servidor)
             combo_fmt = QComboBox()
             srv_sel_index = group.get("selected_server", 0)
             srv_name = group["servers"][srv_sel_index] if group["servers"] else ""
@@ -1422,8 +1478,8 @@ class MainWindow(QMainWindow):
             combo_fmt.setProperty('rom_id', rom_id)
             combo_fmt.setProperty('row_idx', row)
             combo_fmt.currentIndexChanged.connect(self._group_format_changed)
-            self.table_results.setCellWidget(row, 2, combo_fmt)
-            # Columna 3: selector de idiomas (depende de servidor y formato)
+            self.table_results.setCellWidget(row, 3, combo_fmt)
+            # Columna 4: selector de idiomas (depende de servidor y formato)
             combo_lang = QComboBox()
             fmt_sel_index = group.get("selected_format", 0)
             fmt_name = fmt_list[fmt_sel_index] if fmt_list and fmt_sel_index < len(fmt_list) else ""
@@ -1434,13 +1490,13 @@ class MainWindow(QMainWindow):
             combo_lang.setProperty('rom_id', rom_id)
             combo_lang.setProperty('row_idx', row)
             combo_lang.currentIndexChanged.connect(self._group_language_changed)
-            self.table_results.setCellWidget(row, 3, combo_lang)
-            # Columna 4: botón para añadir a la cesta
+            self.table_results.setCellWidget(row, 4, combo_lang)
+            # Columna 5: botón para añadir a la cesta
             btn_add = QPushButton("Añadir")
             btn_add.setProperty('rom_id', rom_id)
             btn_add.setProperty('row_idx', row)
             btn_add.clicked.connect(self._add_group_to_basket)
-            self.table_results.setCellWidget(row, 4, btn_add)
+            self.table_results.setCellWidget(row, 5, btn_add)
 
     # --- Manejadores de cambios en los combos de resultados ---
     def _group_server_changed(self, index: int) -> None:
@@ -1466,7 +1522,7 @@ class MainWindow(QMainWindow):
         row_idx = int(row_idx)
         # Formato
         srv_name = group['servers'][group['selected_server']] if group['servers'] else ""
-        fmt_combo: QComboBox = self.table_results.cellWidget(row_idx, 2)  # type: ignore
+        fmt_combo: QComboBox = self.table_results.cellWidget(row_idx, 3)  # type: ignore
         fmt_combo.blockSignals(True)
         fmt_combo.clear()
         fmt_list = group['formats_by_server'].get(srv_name, [])
@@ -1475,7 +1531,7 @@ class MainWindow(QMainWindow):
         fmt_combo.setCurrentIndex(0 if fmt_list else 0)
         fmt_combo.blockSignals(False)
         # Idiomas
-        lang_combo: QComboBox = self.table_results.cellWidget(row_idx, 3)  # type: ignore
+        lang_combo: QComboBox = self.table_results.cellWidget(row_idx, 4)  # type: ignore
         lang_combo.blockSignals(True)
         lang_combo.clear()
         fmt_name = fmt_list[0] if fmt_list else ""
@@ -1511,7 +1567,7 @@ class MainWindow(QMainWindow):
         fmt_name = fmt_list[combo.currentIndex()] if fmt_list and combo.currentIndex() < len(fmt_list) else ""
         # Actualizar combo de idiomas
         row_idx = int(row_idx)
-        lang_combo: QComboBox = self.table_results.cellWidget(row_idx, 3)  # type: ignore
+        lang_combo: QComboBox = self.table_results.cellWidget(row_idx, 4)  # type: ignore
         lang_combo.blockSignals(True)
         lang_combo.clear()
         lang_list = group['langs_by_server_format'].get((srv_name, fmt_name), [])
@@ -1651,17 +1707,17 @@ class MainWindow(QMainWindow):
             group['name'], srv_name, fmt_name, lang_name,
         )
         final_dir = base_dir
-        if self.chk_create_sys_dirs.isChecked():
-            sys_name = group.get('system_name', '')
-            if sys_name:
-                final_dir = os.path.join(final_dir, safe_filename(sys_name))
+        sys_name = group.get('system_name', '')
+        if self.chk_create_sys_dirs.isChecked() and sys_name:
+            final_dir = os.path.join(final_dir, safe_filename(sys_name))
         name = self._build_download_name(row_data['url'])
         expected_hash = row_data['hash'] if 'hash' in row_data.keys() else None
-        download_item = DownloadItem(name=name, url=row_data['url'], dest_dir=final_dir, expected_hash=expected_hash)
+        download_item = DownloadItem(name=name, url=row_data['url'], dest_dir=final_dir, expected_hash=expected_hash, system_name=sys_name)
         src_row = {
             'server': row_data['server'] or '',
             'fmt': row_data['fmt'] or '',
             'size': row_data['size'] or '',
+            'system_name': sys_name,
             'display_name': row_data['rom_name'] or group['name'],
             'rom_name': row_data['rom_name'] or group['name'],
         }
