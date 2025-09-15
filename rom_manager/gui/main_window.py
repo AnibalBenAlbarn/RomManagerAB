@@ -23,6 +23,7 @@ from PyQt6.QtGui import QDesktopServices
 from ..database import Database
 from ..models import LinksTableModel
 from ..download import DownloadManager, DownloadItem
+from ..emulators import fetch_emulators, search_emulators
 from ..utils import safe_filename
 
 # -----------------------------
@@ -65,17 +66,22 @@ class MainWindow(QMainWindow):
         self.basket_items: dict[int, dict] = {}
         self.search_groups: dict[int, List[sqlite3.Row]] = {}
 
-        # Tabs: mostrar primero el selector, luego descargas y finalmente ajustes
+        # Tabs: mostrar primero el selector, luego emuladores, descargas y finalmente ajustes
         tabs = QTabWidget(); self.setCentralWidget(tabs)
         # Crear contenedores para cada pestaña
-        self.tab_selector = QWidget(); self.tab_downloads = QWidget(); self.tab_settings = QWidget()
-        # Añadir pestañas en orden: Selector, Descargas, Ajustes
+        self.tab_selector = QWidget()
+        self.tab_emulators = QWidget()
+        self.tab_downloads = QWidget()
+        self.tab_settings = QWidget()
+        # Añadir pestañas en orden: Selector, Emuladores, Descargas, Ajustes
         tabs.addTab(self.tab_selector, "Selector de ROMs")
+        tabs.addTab(self.tab_emulators, "Emuladores")
         tabs.addTab(self.tab_downloads, "Descargas")
         tabs.addTab(self.tab_settings, "Ajustes")
 
         # Construir las pestañas
         self._build_selector_tab()
+        self._build_emulators_tab()
         # La cesta se construirá dentro del selector, no como pestaña aparte
         self._build_downloads_tab()
         self._build_settings_tab()
@@ -262,6 +268,68 @@ class MainWindow(QMainWindow):
 
         # Inicializar la cesta vacía
         self._refresh_basket_table()
+
+    # --- Emuladores ---
+    def _build_emulators_tab(self) -> None:
+        """Construye la pestaña de emuladores con búsqueda y tabla de descargas."""
+        lay = QVBoxLayout(self.tab_emulators)
+        self.le_emulator_search = QLineEdit()
+        self.le_emulator_search.setPlaceholderText("Buscar emulador…")
+        lay.addWidget(self.le_emulator_search)
+
+        self.table_emulators = QTableWidget(0, 4)
+        self.table_emulators.setHorizontalHeaderLabels([
+            "Nombre", "Sistema", "Versión", "Acciones"
+        ])
+        self.table_emulators.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        lay.addWidget(self.table_emulators)
+
+        self.emulators_catalog = fetch_emulators()
+        self._refresh_emulators_table(self.emulators_catalog)
+
+        self.le_emulator_search.textChanged.connect(self._on_emulator_search)
+
+    def _refresh_emulators_table(self, data: List[dict]) -> None:
+        self.table_emulators.setRowCount(0)
+        for emu in data:
+            row = self.table_emulators.rowCount()
+            self.table_emulators.insertRow(row)
+            self.table_emulators.setItem(row, 0, QTableWidgetItem(emu.get("name", "")))
+            self.table_emulators.setItem(row, 1, QTableWidgetItem(emu.get("system", "")))
+            self.table_emulators.setItem(row, 2, QTableWidgetItem(emu.get("version", "")))
+            btn = QPushButton("Descargar")
+            btn.clicked.connect(lambda _, e=emu: self._enqueue_emulator(e))
+            self.table_emulators.setCellWidget(row, 3, btn)
+
+    def _on_emulator_search(self, text: str) -> None:
+        filtered = search_emulators(text, self.emulators_catalog)
+        self._refresh_emulators_table(filtered)
+
+    def _enqueue_emulator(self, emulator: dict) -> None:
+        save_dir = self.le_dir.text().strip()
+        if not save_dir:
+            QMessageBox.warning(self, "Descargas", "Selecciona una carpeta de descargas en la pestaña de Ajustes.")
+            return
+        url = emulator.get("url", "")
+        if not url:
+            return
+        dest_dir = save_dir
+        sys_name = emulator.get("system", "")
+        if self.chk_create_sys_dirs.isChecked() and sys_name:
+            dest_dir = os.path.join(dest_dir, safe_filename(sys_name))
+        name = self._build_download_name(url)
+        item = DownloadItem(name=name, url=url, dest_dir=dest_dir, system_name=sys_name)
+        row_data = {
+            "display_name": emulator.get("name", ""),
+            "system_name": sys_name,
+            "fmt": "",
+            "size": "",
+            "server": "",
+        }
+        self._add_download_row(item, row_data)  # type: ignore[arg-type]
+        self.manager.enqueue(item)
+        self._bind_item_signals(item)
+        self.items.append(item)
 
     # --- Descargas ---
     def _build_downloads_tab(self) -> None:

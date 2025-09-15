@@ -296,6 +296,10 @@ class DownloadManager(QObject):
         self.queue_changed.emit()
         self.pump()
 
+    def enqueue(self, item: DownloadItem) -> None:
+        """Alias de :meth:`add` para compatibilidad."""
+        self.add(item)
+
     def remove(self, item: DownloadItem) -> None:
         logging.debug(
             "Removing item from manager: %s (active=%s, queued=%s)",
