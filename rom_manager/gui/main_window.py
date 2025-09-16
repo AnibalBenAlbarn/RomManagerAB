@@ -22,10 +22,12 @@ from PyQt6.QtGui import QDesktopServices, QIcon
 
 from ..database import Database
 from ..models import LinksTableModel
-from ..download import DownloadManager, DownloadItem
+from ..download import DownloadManager, DownloadItem, ExtractionTask
 from ..emulators import EmulatorInfo, get_all_systems, get_emulator_catalog, get_emulators_for_system
 from ..paths import config_path, session_path
+
 from ..utils import safe_filename, extract_archive, resource_path
+
 
 # -----------------------------
 # Ventana principal con pestañas (paridad JavaFX)
@@ -602,6 +604,7 @@ class MainWindow(QMainWindow):
         self._bind_item_signals(download_item)
         self.items.append(download_item)
 
+
     def _download_selected_extra(self) -> None:
         base_dir = self.le_emulator_dir.text().strip()
         if not base_dir:
@@ -670,31 +673,24 @@ class MainWindow(QMainWindow):
 
     def _handle_emulator_install(self, item: DownloadItem) -> None:
         dest_file = os.path.join(item.dest_dir, safe_filename(item.name))
+
         if not os.path.exists(dest_file):
             logging.warning("Archivo de emulador no encontrado tras la descarga: %s", dest_file)
-            return
-        try:
-            extract_archive(dest_file, item.dest_dir)
-        except Exception as exc:
-            logging.exception("Error extracting emulator archive %s", dest_file)
-            QMessageBox.warning(
-                self,
-                "Emuladores",
-                f"No se pudo descomprimir {os.path.basename(dest_file)}.\n{exc}",
-            )
+            if item.row is not None and 0 <= item.row < self.table_dl.rowCount():
+                self.table_dl.item(item.row, 4).setText('Error: archivo no encontrado')
             return
 
         delete_archive = False
         if isinstance(item.metadata, dict):
             delete_archive = bool(item.metadata.get("delete_archive"))
-        if delete_archive:
-            try:
-                os.remove(dest_file)
-            except Exception:
-                logging.exception("Error deleting emulator archive %s", dest_file)
 
-        if item.row is not None and 0 <= item.row < self.table_dl.rowCount():
-            self.table_dl.item(item.row, 4).setText("Instalado")
+        self._start_extraction(
+            item,
+            dest_file,
+            item.dest_dir,
+            delete_archive=delete_archive,
+            success_status='Instalado',
+        )
 
     def _should_extract_extra(self, file_path: str) -> bool:
         path = Path(file_path)
@@ -1099,8 +1095,10 @@ class MainWindow(QMainWindow):
             self.table_dl.item(it.row, 4).setText('En cola')
             prog: QProgressBar = self.table_dl.cellWidget(it.row, 5)  # type: ignore
             prog.setValue(0)
+            prog.setStyleSheet('')
             self.table_dl.item(it.row, 6).setText('-')
             self.table_dl.item(it.row, 7).setText('-')
+        it.extract_task = None
         style = QApplication.style()
         try:
             btn.clicked.disconnect()
@@ -1134,40 +1132,137 @@ class MainWindow(QMainWindow):
 
     def _on_done(self, it: DownloadItem, ok: bool, msg: str) -> None:
         """Marca la descarga como completada o con error."""
-        # Verificar que la fila sea válida antes de actualizar
         if it.row is None or it.row < 0 or it.row >= self.table_dl.rowCount():
             return
-        current = self.table_dl.item(it.row, 4).text()
-        if current.startswith("Integridad"):
-            # Mantener el estado de integridad calculado previamente
-            logging.debug("Download finished for %s with integrity status: %s", it.name, current)
-        else:
-            self.table_dl.item(it.row, 4).setText("Completado" if ok else f"Error: {msg}")
-            logging.debug("Download finished for %s: ok=%s, msg=%s", it.name, ok, msg)
+
+        current_status = self.table_dl.item(it.row, 4).text()
         if not ok:
+            if current_status.startswith('Integridad'):
+                logging.debug("Download finished for %s with integrity status (error reported separately): %s", it.name, current_status)
+            else:
+                self.table_dl.item(it.row, 4).setText(f"Error: {msg}")
+                logging.debug("Download failed for %s: %s", it.name, msg)
             return
 
         category = getattr(it, 'category', '')
         if category == 'emulator':
             self._handle_emulator_install(it)
+
             return
         if category == 'emulator-extra':
             self._handle_emulator_extra(it)
             return
 
+        start_rom_extraction = False
         if self.chk_extract_after.isChecked():
             system = getattr(it, 'system_name', '')
             if 'mame' not in system.lower():
-                dest_file = os.path.join(it.dest_dir, safe_filename(it.name))
-                try:
-                    extract_archive(dest_file, it.dest_dir)
-                    if self.chk_delete_after.isChecked():
-                        try:
-                            os.remove(dest_file)
-                        except Exception:
-                            logging.exception("Error deleting archive %s", dest_file)
-                except Exception:
-                    logging.exception("Error extracting %s", dest_file)
+                start_rom_extraction = True
+
+        if start_rom_extraction:
+            logging.debug("Download finished for %s, starting archive extraction", it.name)
+            self.table_dl.item(it.row, 4).setText('Preparando extracción')
+            self._start_extraction(
+                it,
+                archive_path,
+                it.dest_dir,
+                delete_archive=self.chk_delete_after.isChecked(),
+                success_status='Extraído',
+            )
+            return
+
+        if current_status.startswith('Integridad'):
+            logging.debug("Download finished for %s with integrity status: %s", it.name, current_status)
+        else:
+            self.table_dl.item(it.row, 4).setText('Completado')
+            logging.debug("Download finished for %s: ok=%s, msg=%s", it.name, ok, msg)
+
+    def _start_extraction(
+        self,
+        item: DownloadItem,
+        archive_path: str,
+        dest_dir: str,
+        *,
+        delete_archive: bool = False,
+        success_status: str = 'Extraído',
+    ) -> None:
+        """Lanza la extracción del archivo asociado a ``item`` en segundo plano."""
+
+        if not os.path.exists(archive_path):
+            logging.warning("Archivo para extraer no encontrado: %s", archive_path)
+            if item.row is not None and 0 <= item.row < self.table_dl.rowCount():
+                self.table_dl.item(item.row, 4).setText('Error: archivo no encontrado para extraer')
+            return
+
+        if item.row is None or item.row < 0 or item.row >= self.table_dl.rowCount():
+            logging.debug("Extraction requested for %s but row is invalid", item.name)
+            return
+
+        prog: QProgressBar = self.table_dl.cellWidget(item.row, 5)  # type: ignore
+        prog.setRange(0, 100)
+        prog.setValue(0)
+        prog.setStyleSheet('QProgressBar::chunk { background-color: #4caf50; }')
+        self.table_dl.item(item.row, 6).setText('-')
+        self.table_dl.item(item.row, 7).setText('-')
+
+        task = ExtractionTask(archive_path, dest_dir)
+        item.extract_task = task
+
+        task.signals.progress.connect(
+            lambda done, total, _speed, _eta, status, it=item: self._update_progress(it, done, total, 0.0, 0.0, status)
+        )
+        task.signals.finished_ok.connect(
+            lambda _res, it=item, arc=archive_path, delete=delete_archive, st=success_status: self._on_extraction_finished(
+                it, arc, delete, st
+            )
+        )
+        task.signals.failed.connect(
+            lambda message, it=item, arc=archive_path: self._on_extraction_failed(it, message, arc)
+        )
+        self.pool.start(task)
+
+    def _on_extraction_finished(
+        self,
+        item: DownloadItem,
+        archive_path: str,
+        delete_archive: bool,
+        success_status: str,
+    ) -> None:
+        """Actualiza la interfaz cuando la extracción finaliza correctamente."""
+
+        item.extract_task = None
+        if item.row is not None and 0 <= item.row < self.table_dl.rowCount():
+            self.table_dl.item(item.row, 4).setText(success_status)
+            prog: QProgressBar = self.table_dl.cellWidget(item.row, 5)  # type: ignore
+            prog.setStyleSheet('')
+            prog.setValue(100)
+            self.table_dl.item(item.row, 6).setText('-')
+            self.table_dl.item(item.row, 7).setText('-')
+
+        if delete_archive and os.path.exists(archive_path):
+            try:
+                os.remove(archive_path)
+            except Exception:
+                logging.exception("Error deleting archive %s", archive_path)
+
+    def _on_extraction_failed(self, item: DownloadItem, message: str, archive_path: str) -> None:
+        """Muestra el error en la tabla cuando la extracción falla."""
+
+        item.extract_task = None
+        logging.error("Extraction failed for %s: %s", item.name, message)
+        if item.row is not None and 0 <= item.row < self.table_dl.rowCount():
+            self.table_dl.item(item.row, 4).setText(f"Error extracción: {message}")
+            prog: QProgressBar = self.table_dl.cellWidget(item.row, 5)  # type: ignore
+            prog.setStyleSheet('')
+            self.table_dl.item(item.row, 6).setText('-')
+            self.table_dl.item(item.row, 7).setText('-')
+
+        if getattr(item, 'category', '') == 'emulator':
+            QMessageBox.warning(
+                self,
+                'Emuladores',
+                f"No se pudo descomprimir {os.path.basename(archive_path)}.\n{message}",
+            )
 
     def _cancel_item(self, it: DownloadItem) -> None:
         """
@@ -1288,6 +1383,20 @@ class MainWindow(QMainWindow):
                 logging.exception("Error disconnecting failed signal for %s", it.name)
             # Liberar referencia a la tarea
             it.task = None
+        if it.extract_task is not None:
+            try:
+                it.extract_task.signals.progress.disconnect()
+            except Exception:
+                logging.exception("Error disconnecting extraction progress for %s", it.name)
+            try:
+                it.extract_task.signals.finished_ok.disconnect()
+            except Exception:
+                logging.exception("Error disconnecting extraction finished for %s", it.name)
+            try:
+                it.extract_task.signals.failed.disconnect()
+            except Exception:
+                logging.exception("Error disconnecting extraction failed for %s", it.name)
+            it.extract_task = None
         # Eliminar fila de la tabla
         if it.row is not None:
             row = it.row
@@ -1374,6 +1483,20 @@ class MainWindow(QMainWindow):
                 except Exception:
                     logging.exception("Error disconnecting failed signal for %s", it.name)
                 it.task = None
+            if it.extract_task is not None:
+                try:
+                    it.extract_task.signals.progress.disconnect()
+                except Exception:
+                    logging.exception("Error disconnecting extraction progress for %s", it.name)
+                try:
+                    it.extract_task.signals.finished_ok.disconnect()
+                except Exception:
+                    logging.exception("Error disconnecting extraction finished for %s", it.name)
+                try:
+                    it.extract_task.signals.failed.disconnect()
+                except Exception:
+                    logging.exception("Error disconnecting extraction failed for %s", it.name)
+                it.extract_task = None
             # Eliminar fila de la tabla y ajustar índices
             if it.row is not None:
                 row_index = it.row

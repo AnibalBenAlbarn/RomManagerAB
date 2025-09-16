@@ -2,27 +2,26 @@
 Módulo de utilidades para el gestor de ROMs.
 
 Actualmente contiene funciones auxiliares que se utilizan en distintas
-partes de la aplicación, como la sanitización de nombres de archivo.
+partes de la aplicación, como la sanitización de nombres de archivo y la
+extracción de archivos comprimidos con soporte para progreso.
 """
 
 from __future__ import annotations
 
 import os
+
 import sys
+
 import shutil
+import tarfile
+import zipfile
 from pathlib import Path
+from typing import Callable, Optional
 
 
 def safe_filename(name: str) -> str:
-    """
-    Sanitiza un nombre de archivo sustituyendo caracteres no válidos.
-    Se utiliza para crear nombres de archivo seguros en diferentes
-    sistemas operativos.
+    """Sanitiza un nombre de archivo sustituyendo caracteres no válidos."""
 
-    :param name: Nombre de archivo original.
-    :return: Nombre de archivo seguro, con caracteres problemáticos
-        reemplazados por guiones bajos.
-    """
     bad = '<>:"/\\|?*\n\r\t'
     return ''.join('_' if c in bad else c for c in name).strip()
 
@@ -39,28 +38,199 @@ def resource_path(relative_path: str) -> str:
 
 
 def extract_archive(archive_path: str, dest_dir: str) -> None:
+
     """Descomprime ``archive_path`` en ``dest_dir``.
 
-    Se utiliza ``shutil.unpack_archive`` para formatos conocidos (zip, tar,
-    etc.) y se recurre a :mod:`py7zr` cuando el archivo es ``.7z``. Lanza
-    :class:`RuntimeError` si la extracción no es posible.
+    Si se proporciona ``progress`` se llamará periódicamente con la cantidad
+    de datos procesados, el total estimado y un texto de estado.
+    Lanza :class:`RuntimeError` si la extracción no es posible o requiere
+    contraseña.
     """
 
     path = Path(archive_path)
+    if not path.exists():
+        raise RuntimeError(f'El archivo {path} no existe')
+
     dest = Path(dest_dir)
     dest.mkdir(parents=True, exist_ok=True)
+    base_root = dest.resolve()
 
-    suffix = path.suffix.lower()
-    if suffix == '.7z':
-        try:
-            import py7zr  # type: ignore import-not-found
-        except ImportError as exc:  # pragma: no cover - dependencia opcional
-            raise RuntimeError('py7zr es necesario para extraer archivos .7z') from exc
-        with py7zr.SevenZipFile(path, 'r') as archive:
-            archive.extractall(dest)
-        return
+    def emit(done: int, total: int, status: str) -> None:
+        if progress:
+            progress(int(done), int(total), status)
+
+    def safe_target(name: str) -> Path:
+        rel = Path(name)
+        if rel.is_absolute():
+            raise RuntimeError(f'Entrada con ruta no válida: {name}')
+        resolved = (base_root / rel).resolve()
+        if os.path.commonpath([str(base_root), str(resolved)]) != str(base_root):
+            raise RuntimeError(f'Entrada con ruta no válida: {name}')
+        return resolved
 
     try:
-        shutil.unpack_archive(str(path), str(dest))
-    except shutil.ReadError as exc:  # pragma: no cover - depende de los datos
+        if _is_7z_file(path):
+            _extract_7z(path, base_root, emit)
+        elif zipfile.is_zipfile(str(path)):
+            _extract_zip(path, base_root, emit, safe_target)
+        elif tarfile.is_tarfile(str(path)):
+            _extract_tar(path, base_root, emit, safe_target)
+        else:
+            emit(0, 1, 'Extrayendo')
+            shutil.unpack_archive(str(path), str(base_root))
+            emit(1, 1, 'Extracción completada')
+    except RuntimeError:
+        raise
+    except Exception as exc:  # pragma: no cover - depende de los datos de entrada
         raise RuntimeError(f'No se pudo descomprimir {path.name}: {exc}') from exc
+
+
+def _is_7z_file(path: Path) -> bool:
+    try:
+        import py7zr  # type: ignore import-not-found
+
+        if py7zr.is_7zfile(str(path)):
+            return True
+    except ImportError:
+        if path.suffix.lower() == '.7z':
+            raise RuntimeError('py7zr es necesario para extraer archivos .7z')
+    return path.suffix.lower() == '.7z'
+
+
+def _extract_7z(path: Path, dest: Path, emit: Callable[[int, int, str], None]) -> None:
+    try:
+        import py7zr  # type: ignore import-not-found
+    except ImportError as exc:  # pragma: no cover - dependencia opcional
+        raise RuntimeError('py7zr es necesario para extraer archivos .7z') from exc
+
+    with py7zr.SevenZipFile(path, 'r') as archive:
+        infos = archive.list()
+        files = [info for info in infos if not getattr(info, 'is_directory', False)]
+        total = sum(max(0, int(getattr(info, 'uncompressed', 0) or 0)) for info in files)
+        if total <= 0:
+            total = max(len(files), 1)
+
+        class _Callback(py7zr.callbacks.ExtractCallback):  # type: ignore[attr-defined]
+            def __init__(self) -> None:
+                self._done = 0
+                self._total = max(int(total), 1)
+                self._current = ''
+                self._current_done = 0
+
+            def report_start_preparation(self) -> None:
+                emit(self._done, self._total, 'Preparando extracción')
+
+            def report_start(self, processing_file_path, processing_bytes) -> None:  # type: ignore[override]
+                self._current = processing_file_path or ''
+                self._current_done = 0
+                status = f'Extrayendo: {self._current}' if self._current else 'Extrayendo'
+                emit(self._done, self._total, status)
+
+            def report_update(self, decompressed_bytes) -> None:  # type: ignore[override]
+                if decompressed_bytes:
+                    self._current_done += int(decompressed_bytes)
+                    self._done = min(self._total, self._done + int(decompressed_bytes))
+                    status = f'Extrayendo: {self._current}' if self._current else 'Extrayendo'
+                    emit(self._done, self._total, status)
+
+            def report_end(self, processing_file_path, wrote_bytes) -> None:  # type: ignore[override]
+                remaining = 0
+                if wrote_bytes:
+                    remaining = int(wrote_bytes) - self._current_done
+                if remaining > 0:
+                    self._done = min(self._total, self._done + remaining)
+                status = f'Extrayendo: {processing_file_path}' if processing_file_path else 'Extrayendo'
+                emit(self._done, self._total, status)
+
+            def report_warning(self, message) -> None:  # type: ignore[override]
+                emit(self._done, self._total, f'Aviso: {message}')
+
+            def report_postprocess(self) -> None:  # type: ignore[override]
+                emit(self._done, self._total, 'Finalizando')
+
+        callback = _Callback()
+        try:
+            archive.extractall(path=dest, callback=callback)
+        except py7zr.PasswordRequired as exc:  # pragma: no cover - depende del archivo
+            raise RuntimeError('Se requiere contraseña para descomprimir este archivo .7z') from exc
+        emit(total, total, 'Extracción completada')
+
+
+def _extract_zip(
+    path: Path,
+    dest: Path,
+    emit: Callable[[int, int, str], None],
+    safe_target: Callable[[str], Path],
+) -> None:
+    with zipfile.ZipFile(path) as archive:
+        infos = archive.infolist()
+        files = [info for info in infos if not info.is_dir()]
+        total = sum(max(0, int(info.file_size)) for info in files)
+        if total <= 0:
+            total = max(len(files), 1)
+        done = 0
+        emit(done, total, 'Preparando extracción')
+        for info in infos:
+            name = info.filename
+            if info.is_dir():
+                safe_target(name).mkdir(parents=True, exist_ok=True)
+                continue
+            target = safe_target(name)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                with archive.open(info) as src, open(target, 'wb') as dst:
+                    shutil.copyfileobj(src, dst, length=1024 * 256)
+            except RuntimeError as exc:  # pragma: no cover - depende del archivo
+                if 'password' in str(exc).lower():
+                    raise RuntimeError('Se requiere contraseña para descomprimir este archivo .zip') from exc
+                raise
+            done += int(info.file_size or 0)
+            status = f'Extrayendo: {name}' if name else 'Extrayendo'
+            emit(done, total, status)
+        emit(total, total, 'Extracción completada')
+
+
+def _extract_tar(
+    path: Path,
+    dest: Path,
+    emit: Callable[[int, int, str], None],
+    safe_target: Callable[[str], Path],
+) -> None:
+    with tarfile.open(path) as archive:
+        members = archive.getmembers()
+        files = [m for m in members if m.isfile()]
+        total = sum(max(0, int(m.size)) for m in files)
+        if total <= 0:
+            total = max(len(files), 1)
+        done = 0
+        emit(done, total, 'Preparando extracción')
+        for member in members:
+            name = member.name
+            target = safe_target(name)
+            if member.isdir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            if member.isfile():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                extracted = archive.extractfile(member)
+                if extracted is None:
+                    raise RuntimeError(f'No se pudo extraer {name}')
+                with extracted, open(target, 'wb') as dst:
+                    shutil.copyfileobj(extracted, dst, length=1024 * 256)
+                if member.mtime is not None:
+                    try:
+                        os.utime(target, (member.mtime, member.mtime))
+                    except OSError:
+                        pass
+                if member.mode is not None:
+                    try:
+                        os.chmod(target, member.mode)
+                    except PermissionError:
+                        pass
+                done += int(member.size or 0)
+                status = f'Extrayendo: {name}' if name else 'Extrayendo'
+                emit(done, total, status)
+                continue
+            # Enlaces u otros tipos especiales: delegar en tarfile tras validar ruta
+            archive.extract(member, path=str(dest))
+        emit(total, total, 'Extracción completada')
