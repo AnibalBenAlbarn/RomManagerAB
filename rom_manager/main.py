@@ -11,18 +11,20 @@ from __future__ import annotations
 
 import sys
 import logging
-from pathlib import Path
+
+from rom_manager.paths import ensure_app_directories, log_path
 
 
 def _setup_logging() -> None:
-    """Configura el logging para consola y archivo ``log.txt``.
+    """Configura el logging para consola y archivo ``logs/rom_manager.log``.
 
     Se establece un ``sys.excepthook`` personalizado para capturar cualquier
     excepción no manejada y registrarla, de modo que el programa no se cierre
     silenciosamente.
     """
 
-    log_file = Path(__file__).resolve().parent.parent / "log.txt"
+    ensure_app_directories()
+    log_file = log_path()
     logging.basicConfig(
         level=logging.DEBUG,
         format="%(asctime)s [%(levelname)s] %(message)s",
