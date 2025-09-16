@@ -8,12 +8,11 @@ import json
 import logging
 import sqlite3
 import math
-import shutil
 from typing import Optional, List
 
 from PyQt6.QtCore import Qt, QThreadPool, QTimer, QSettings, QUrl, QEvent, QObject
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QLineEdit,
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout, QLabel, QLineEdit,
     QPushButton, QFileDialog, QGroupBox, QComboBox, QSpinBox, QTableView, QTableWidget,
     QTableWidgetItem, QHeaderView, QMessageBox, QProgressBar, QCheckBox, QTabWidget,
     QAbstractItemView, QMenu, QStyle, QSystemTrayIcon
@@ -23,8 +22,8 @@ from PyQt6.QtGui import QDesktopServices, QIcon
 from ..database import Database
 from ..models import LinksTableModel
 from ..download import DownloadManager, DownloadItem
-from ..emulators import fetch_emulators, search_emulators
-from ..utils import safe_filename
+from ..emulators import EmulatorInfo, get_all_systems, get_emulator_catalog, get_emulators_for_system
+from ..utils import safe_filename, extract_archive
 
 # -----------------------------
 # Ventana principal con pestañas (paridad JavaFX)
@@ -58,6 +57,8 @@ class MainWindow(QMainWindow):
         self.manager.queue_changed.connect(self._check_background_downloads)
         self.background_downloads: bool = False
         self.items: List[DownloadItem] = []
+        self._emulator_catalog: List[EmulatorInfo] = []
+        self._current_emulator: Optional[EmulatorInfo] = None
         self.tray_icon: Optional[QSystemTrayIcon] = None
         self._tray_menu: Optional[QMenu] = None
         self._tray_show_action = None
@@ -347,65 +348,226 @@ class MainWindow(QMainWindow):
 
     # --- Emuladores ---
     def _build_emulators_tab(self) -> None:
-        """Construye la pestaña de emuladores con búsqueda y tabla de descargas."""
+        """Construye la pestaña de emuladores con selección dependiente por sistema."""
+
         lay = QVBoxLayout(self.tab_emulators)
-        self.le_emulator_search = QLineEdit()
-        self.le_emulator_search.setPlaceholderText("Buscar emulador…")
-        lay.addWidget(self.le_emulator_search)
 
-        self.table_emulators = QTableWidget(0, 4)
-        self.table_emulators.setHorizontalHeaderLabels([
-            "Nombre", "Sistema", "Versión", "Acciones"
-        ])
-        self.table_emulators.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        lay.addWidget(self.table_emulators)
+        # Carpeta base para instalar los emuladores descargados
+        path_box = QGroupBox("Carpeta de emuladores")
+        path_grid = QGridLayout(path_box)
+        self.le_emulator_dir = QLineEdit()
+        self.btn_emulator_dir = QPushButton("Explorar…")
+        self.btn_emulator_dir.clicked.connect(self._choose_emulator_dir)
+        self.chk_emulator_delete = QCheckBox("Eliminar archivo comprimido tras la extracción")
+        path_grid.addWidget(QLabel("Carpeta base:"), 0, 0)
+        path_grid.addWidget(self.le_emulator_dir, 0, 1)
+        path_grid.addWidget(self.btn_emulator_dir, 0, 2)
+        path_grid.addWidget(self.chk_emulator_delete, 1, 0, 1, 3)
+        lay.addWidget(path_box)
 
-        self.emulators_catalog = fetch_emulators()
-        self._refresh_emulators_table(self.emulators_catalog)
+        # Selector dependiente sistema -> emulador
+        selector_box = QGroupBox("Catálogo de emuladores")
+        selector_grid = QGridLayout(selector_box)
+        self.cmb_emulator_system = QComboBox()
+        self.cmb_emulator = QComboBox()
+        self.cmb_emulator.setEnabled(False)
+        selector_grid.addWidget(QLabel("Sistema:"), 0, 0)
+        selector_grid.addWidget(self.cmb_emulator_system, 0, 1)
+        selector_grid.addWidget(QLabel("Emulador:"), 1, 0)
+        selector_grid.addWidget(self.cmb_emulator, 1, 1)
+        self.btn_emulator_download = QPushButton("Descargar e instalar")
+        self.btn_emulator_download.setEnabled(False)
+        self.btn_emulator_download.clicked.connect(self._download_selected_emulator)
+        selector_grid.addWidget(self.btn_emulator_download, 2, 0, 1, 2)
+        lay.addWidget(selector_box)
 
-        self.le_emulator_search.textChanged.connect(self._on_emulator_search)
+        # Detalles del emulador seleccionado
+        details_box = QGroupBox("Detalles del emulador")
+        form = QFormLayout(details_box)
+        self.lbl_emulator_systems = QLabel("—")
+        self.lbl_emulator_systems.setWordWrap(True)
+        form.addRow("Sistemas compatibles:", self.lbl_emulator_systems)
 
-    def _refresh_emulators_table(self, data: List[dict]) -> None:
-        self.table_emulators.setRowCount(0)
-        for emu in data:
-            row = self.table_emulators.rowCount()
-            self.table_emulators.insertRow(row)
-            self.table_emulators.setItem(row, 0, QTableWidgetItem(emu.get("name", "")))
-            self.table_emulators.setItem(row, 1, QTableWidgetItem(emu.get("system", "")))
-            self.table_emulators.setItem(row, 2, QTableWidgetItem(emu.get("version", "")))
-            btn = QPushButton("Descargar")
-            btn.clicked.connect(lambda _, e=emu: self._enqueue_emulator(e))
-            self.table_emulators.setCellWidget(row, 3, btn)
+        url_container = QWidget()
+        url_layout = QHBoxLayout(url_container)
+        url_layout.setContentsMargins(0, 0, 0, 0)
+        self.le_emulator_url = QLineEdit()
+        self.le_emulator_url.setReadOnly(True)
+        self.btn_emulator_open_url = QPushButton("Abrir enlace")
+        self.btn_emulator_open_url.setEnabled(False)
+        self.btn_emulator_open_url.clicked.connect(self._open_emulator_url)
+        url_layout.addWidget(self.le_emulator_url)
+        url_layout.addWidget(self.btn_emulator_open_url)
+        form.addRow("URL de descarga:", url_container)
 
-    def _on_emulator_search(self, text: str) -> None:
-        filtered = search_emulators(text, self.emulators_catalog)
-        self._refresh_emulators_table(filtered)
+        self.lbl_emulator_extras = QLabel("—")
+        self.lbl_emulator_extras.setWordWrap(True)
+        self.lbl_emulator_extras.setOpenExternalLinks(True)
+        form.addRow("Descargas extra:", self.lbl_emulator_extras)
 
-    def _enqueue_emulator(self, emulator: dict) -> None:
-        save_dir = self.le_dir.text().strip()
-        if not save_dir:
-            QMessageBox.warning(self, "Descargas", "Selecciona una carpeta de descargas en la pestaña de Ajustes.")
+        self.lbl_emulator_notes = QLabel("—")
+        self.lbl_emulator_notes.setWordWrap(True)
+        form.addRow("Notas:", self.lbl_emulator_notes)
+        lay.addWidget(details_box)
+
+        # Cargar catálogo y poblar combos
+        self._emulator_catalog = get_emulator_catalog()
+        self.cmb_emulator_system.addItem("Selecciona un sistema…", "")
+        for system in get_all_systems():
+            self.cmb_emulator_system.addItem(system, system)
+        self.cmb_emulator_system.addItem("Todos los sistemas", "__all__")
+        self.cmb_emulator_system.currentIndexChanged.connect(self._on_emulator_system_changed)
+        self.cmb_emulator.currentIndexChanged.connect(self._on_emulator_selected)
+        self._on_emulator_system_changed(0)
+
+    def _on_emulator_system_changed(self, index: int) -> None:
+        """Actualiza la lista de emuladores al cambiar de sistema."""
+
+        value = self.cmb_emulator_system.currentData()
+        if value == "__all__":
+            data = self._emulator_catalog
+        elif not value:
+            data = []
+        else:
+            data = get_emulators_for_system(str(value))
+        self._populate_emulator_combo(data)
+
+    def _populate_emulator_combo(self, emulators: List[EmulatorInfo]) -> None:
+        self.cmb_emulator.blockSignals(True)
+        self.cmb_emulator.clear()
+        for emu in emulators:
+            self.cmb_emulator.addItem(emu.name, emu)
+        self.cmb_emulator.blockSignals(False)
+        has_data = bool(emulators)
+        self.cmb_emulator.setEnabled(has_data)
+        self.btn_emulator_download.setEnabled(False)
+        if has_data:
+            self.cmb_emulator.setCurrentIndex(0)
+            self._update_emulator_details(emulators[0])
+        else:
+            self._update_emulator_details(None)
+
+    def _on_emulator_selected(self, index: int) -> None:
+        emu = self.cmb_emulator.currentData()
+        if isinstance(emu, EmulatorInfo):
+            self._update_emulator_details(emu)
+        else:
+            self._update_emulator_details(None)
+
+    def _update_emulator_details(self, emulator: Optional[EmulatorInfo]) -> None:
+        self._current_emulator = emulator
+        if not emulator:
+            self.lbl_emulator_systems.setText("—")
+            self.le_emulator_url.setText("")
+            self.lbl_emulator_extras.setText("—")
+            self.lbl_emulator_notes.setText("—")
+            self.btn_emulator_download.setEnabled(False)
+            self.btn_emulator_open_url.setEnabled(False)
             return
-        url = emulator.get("url", "")
+
+        systems_text = ", ".join(emulator.systems)
+        self.lbl_emulator_systems.setText(systems_text)
+        self.le_emulator_url.setText(emulator.url)
+        self.btn_emulator_open_url.setEnabled(bool(emulator.url))
+        self.btn_emulator_download.setEnabled(bool(emulator.url))
+        if emulator.extras:
+            links = []
+            for extra in emulator.extras:
+                label = extra.get("label", extra.get("url", ""))
+                url = extra.get("url", "")
+                if url:
+                    links.append(f"<a href=\"{url}\">{label}</a>")
+            self.lbl_emulator_extras.setText("<br/>".join(links) if links else "—")
+        else:
+            self.lbl_emulator_extras.setText("—")
+        self.lbl_emulator_notes.setText(emulator.notes or "—")
+
+    def _choose_emulator_dir(self) -> None:
+        base = self.le_emulator_dir.text().strip() or os.getcwd()
+        path = QFileDialog.getExistingDirectory(self, "Seleccionar carpeta de emuladores", base)
+        if path:
+            self.le_emulator_dir.setText(path)
+
+    def _open_emulator_url(self) -> None:
+        url = self.le_emulator_url.text().strip()
+        if url:
+            QDesktopServices.openUrl(QUrl(url))
+
+    def _download_selected_emulator(self) -> None:
+        base_dir = self.le_emulator_dir.text().strip()
+        if not base_dir:
+            QMessageBox.warning(self, "Emuladores", "Selecciona una carpeta base para los emuladores.")
+            return
+        system_value = self.cmb_emulator_system.currentData()
+        if not system_value or system_value == "__all__":
+            QMessageBox.information(self, "Emuladores", "Selecciona un sistema concreto para clasificar el emulador.")
+            return
+        emulator = self._current_emulator
+        if not isinstance(emulator, EmulatorInfo):
+            QMessageBox.information(self, "Emuladores", "Selecciona un emulador válido.")
+            return
+        url = emulator.url.strip()
         if not url:
+            QMessageBox.warning(self, "Emuladores", "El emulador seleccionado no tiene URL de descarga.")
             return
-        dest_dir = save_dir
-        sys_name = emulator.get("system", "")
-        if self.chk_create_sys_dirs.isChecked() and sys_name:
-            dest_dir = os.path.join(dest_dir, safe_filename(sys_name))
+
+        system_dir = os.path.join(base_dir, safe_filename(str(system_value)))
+        final_dir = os.path.join(system_dir, safe_filename(emulator.name))
+        os.makedirs(final_dir, exist_ok=True)
+
         name = self._build_download_name(url)
-        item = DownloadItem(name=name, url=url, dest_dir=dest_dir, system_name=sys_name)
-        row_data = {
-            "display_name": emulator.get("name", ""),
-            "system_name": sys_name,
-            "fmt": "",
-            "size": "",
-            "server": "",
+        delete_archive = self.chk_emulator_delete.isChecked()
+        metadata = {
+            "emulator_name": emulator.name,
+            "system": str(system_value),
+            "delete_archive": delete_archive,
         }
-        self._add_download_row(item, row_data)  # type: ignore[arg-type]
-        self.manager.enqueue(item)
-        self._bind_item_signals(item)
-        self.items.append(item)
+        download_item = DownloadItem(
+            name=name,
+            url=url,
+            dest_dir=final_dir,
+            system_name=str(system_value),
+            category="emulator",
+            metadata=metadata,
+        )
+        row = {
+            "display_name": emulator.name,
+            "system_name": str(system_value),
+            "fmt": "Emulador",
+            "size": "",
+        }
+        self._add_download_row(download_item, row)  # type: ignore[arg-type]
+        self.manager.enqueue(download_item)
+        self._bind_item_signals(download_item)
+        self.items.append(download_item)
+
+    def _handle_emulator_install(self, item: DownloadItem) -> None:
+        dest_file = os.path.join(item.dest_dir, safe_filename(item.name))
+        if not os.path.exists(dest_file):
+            logging.warning("Archivo de emulador no encontrado tras la descarga: %s", dest_file)
+            return
+        try:
+            extract_archive(dest_file, item.dest_dir)
+        except Exception as exc:
+            logging.exception("Error extracting emulator archive %s", dest_file)
+            QMessageBox.warning(
+                self,
+                "Emuladores",
+                f"No se pudo descomprimir {os.path.basename(dest_file)}.\n{exc}",
+            )
+            return
+
+        delete_archive = False
+        if isinstance(item.metadata, dict):
+            delete_archive = bool(item.metadata.get("delete_archive"))
+        if delete_archive:
+            try:
+                os.remove(dest_file)
+            except Exception:
+                logging.exception("Error deleting emulator archive %s", dest_file)
+
+        if item.row is not None and 0 <= item.row < self.table_dl.rowCount():
+            self.table_dl.item(item.row, 4).setText("Instalado")
 
     # --- Descargas ---
     def _build_downloads_tab(self) -> None:
@@ -807,13 +969,19 @@ class MainWindow(QMainWindow):
         else:
             self.table_dl.item(it.row, 4).setText("Completado" if ok else f"Error: {msg}")
             logging.debug("Download finished for %s: ok=%s, msg=%s", it.name, ok, msg)
-        # Descomprimir si está habilitado y no es sistema MAME
-        if ok and self.chk_extract_after.isChecked():
+        if not ok:
+            return
+
+        if getattr(it, 'category', '') == 'emulator':
+            self._handle_emulator_install(it)
+            return
+
+        if self.chk_extract_after.isChecked():
             system = getattr(it, 'system_name', '')
             if 'mame' not in system.lower():
                 dest_file = os.path.join(it.dest_dir, safe_filename(it.name))
                 try:
-                    shutil.unpack_archive(dest_file, it.dest_dir)
+                    extract_archive(dest_file, it.dest_dir)
                     if self.chk_delete_after.isChecked():
                         try:
                             os.remove(dest_file)
@@ -1227,16 +1395,20 @@ class MainWindow(QMainWindow):
 
     def _save_session(self) -> None:
         """Guarda la sesión actual de descargas a disco."""
-        data = [
-            {
+        data = []
+        for it in self.items:
+            entry = {
                 "name": it.name,
                 "url": it.url,
                 "dest": it.dest_dir,
                 "hash": it.expected_hash,
                 "system": getattr(it, 'system_name', ''),
+                "category": getattr(it, 'category', ''),
             }
-            for it in self.items
-        ]
+            metadata = getattr(it, 'metadata', None)
+            if isinstance(metadata, dict):
+                entry["metadata"] = metadata
+            data.append(entry)
         try:
             with open(self._session_path(), 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
@@ -1257,9 +1429,19 @@ class MainWindow(QMainWindow):
                 name = d.get('name'); url = d.get('url'); dest_dir = d.get('dest') or self.le_dir.text().strip()
                 expected_hash = d.get('hash')
                 system = d.get('system', '')
+                category = d.get('category', '')
+                metadata = d.get('metadata') if isinstance(d.get('metadata'), dict) else None
                 if not (name and url and dest_dir):
                     continue
-                it = DownloadItem(name=name, url=url, dest_dir=dest_dir, expected_hash=expected_hash, system_name=system)
+                it = DownloadItem(
+                    name=name,
+                    url=url,
+                    dest_dir=dest_dir,
+                    expected_hash=expected_hash,
+                    system_name=system,
+                    category=category,
+                    metadata=metadata,
+                )
                 # Evitar duplicados
                 if any(x.name == name for x in self.items):
                     continue
@@ -1298,16 +1480,20 @@ class MainWindow(QMainWindow):
     def _save_session_silent(self) -> None:
         """Guarda la sesión actual de descargas en el fichero sin mostrar diálogos."""
         try:
-            data = [
-                {
+            data = []
+            for it in self.items:
+                entry = {
                     "name": it.name,
                     "url": it.url,
                     "dest": it.dest_dir,
                     "hash": it.expected_hash,
                     "system": getattr(it, 'system_name', ''),
+                    "category": getattr(it, 'category', ''),
                 }
-                for it in self.items
-            ]
+                metadata = getattr(it, 'metadata', None)
+                if isinstance(metadata, dict):
+                    entry["metadata"] = metadata
+                data.append(entry)
             with open(self._session_path(), 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception:
@@ -1325,9 +1511,19 @@ class MainWindow(QMainWindow):
                 name = d.get('name'); url = d.get('url'); dest_dir = d.get('dest') or self.le_dir.text().strip()
                 expected_hash = d.get('hash')
                 system = d.get('system', '')
+                category = d.get('category', '')
+                metadata = d.get('metadata') if isinstance(d.get('metadata'), dict) else None
                 if not (name and url and dest_dir):
                     continue
-                it = DownloadItem(name=name, url=url, dest_dir=dest_dir, expected_hash=expected_hash, system_name=system)
+                it = DownloadItem(
+                    name=name,
+                    url=url,
+                    dest_dir=dest_dir,
+                    expected_hash=expected_hash,
+                    system_name=system,
+                    category=category,
+                    metadata=metadata,
+                )
                 # Evitar duplicados
                 if any(x.name == name for x in self.items):
                     continue
@@ -1370,6 +1566,8 @@ class MainWindow(QMainWindow):
             settings.setValue('chk_extract_after', self.chk_extract_after.isChecked())
             settings.setValue('chk_delete_after', self.chk_delete_after.isChecked())
             settings.setValue('chk_create_sys_dirs', self.chk_create_sys_dirs.isChecked())
+            settings.setValue('emulator_dir', self.le_emulator_dir.text().strip())
+            settings.setValue('emulator_delete_archive', self.chk_emulator_delete.isChecked())
             # Guardar cesta
             basket_data = []
             for rom_id, item in self.basket_items.items():
@@ -1397,6 +1595,8 @@ class MainWindow(QMainWindow):
             chk_extract = settings.value('chk_extract_after', False, type=bool)
             chk_del = settings.value('chk_delete_after', False, type=bool)
             chk_sys = settings.value('chk_create_sys_dirs', False, type=bool)
+            emulator_dir = settings.value('emulator_dir', '', type=str)
+            emulator_delete = settings.value('emulator_delete_archive', False, type=bool)
             self.le_db.setText(db_path)
             self.le_dir.setText(download_dir)
             self.spin_conc.setValue(conc)
@@ -1404,6 +1604,8 @@ class MainWindow(QMainWindow):
             self.chk_delete_after.setChecked(chk_del)
             self.chk_delete_after.setEnabled(chk_extract)
             self.chk_create_sys_dirs.setChecked(chk_sys)
+            self.le_emulator_dir.setText(emulator_dir)
+            self.chk_emulator_delete.setChecked(emulator_delete)
             # Restaurar archivo de sesión
             if download_dir:
                 self.session_file = os.path.join(download_dir, 'sessions', 'downloads_session.json')

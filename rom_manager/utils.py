@@ -5,6 +5,12 @@ Actualmente contiene funciones auxiliares que se utilizan en distintas
 partes de la aplicación, como la sanitización de nombres de archivo.
 """
 
+from __future__ import annotations
+
+import shutil
+from pathlib import Path
+
+
 def safe_filename(name: str) -> str:
     """
     Sanitiza un nombre de archivo sustituyendo caracteres no válidos.
@@ -17,3 +23,31 @@ def safe_filename(name: str) -> str:
     """
     bad = '<>:"/\\|?*\n\r\t'
     return ''.join('_' if c in bad else c for c in name).strip()
+
+
+def extract_archive(archive_path: str, dest_dir: str) -> None:
+    """Descomprime ``archive_path`` en ``dest_dir``.
+
+    Se utiliza ``shutil.unpack_archive`` para formatos conocidos (zip, tar,
+    etc.) y se recurre a :mod:`py7zr` cuando el archivo es ``.7z``. Lanza
+    :class:`RuntimeError` si la extracción no es posible.
+    """
+
+    path = Path(archive_path)
+    dest = Path(dest_dir)
+    dest.mkdir(parents=True, exist_ok=True)
+
+    suffix = path.suffix.lower()
+    if suffix == '.7z':
+        try:
+            import py7zr  # type: ignore import-not-found
+        except ImportError as exc:  # pragma: no cover - dependencia opcional
+            raise RuntimeError('py7zr es necesario para extraer archivos .7z') from exc
+        with py7zr.SevenZipFile(path, 'r') as archive:
+            archive.extractall(dest)
+        return
+
+    try:
+        shutil.unpack_archive(str(path), str(dest))
+    except shutil.ReadError as exc:  # pragma: no cover - depende de los datos
+        raise RuntimeError(f'No se pudo descomprimir {path.name}: {exc}') from exc

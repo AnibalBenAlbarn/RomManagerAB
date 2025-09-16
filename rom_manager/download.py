@@ -11,7 +11,7 @@ import time
 import math
 import threading
 import hashlib
-from typing import Optional, List
+from typing import Any, Dict, Optional, List
 from dataclasses import dataclass
 
 import logging
@@ -269,6 +269,8 @@ class DownloadItem:
     system_name: str = ""
     task: Optional[DownloadTask] = None
     row: Optional[int] = None
+    category: str = ""
+    metadata: Optional[Dict[str, Any]] = None
 
 
 class DownloadManager(QObject):
