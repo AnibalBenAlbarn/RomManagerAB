@@ -9,6 +9,9 @@ extracción de archivos comprimidos con soporte para progreso.
 from __future__ import annotations
 
 import os
+
+import sys
+
 import shutil
 import tarfile
 import zipfile
@@ -23,10 +26,19 @@ def safe_filename(name: str) -> str:
     return ''.join('_' if c in bad else c for c in name).strip()
 
 
-ProgressCallback = Optional[Callable[[int, int, str], None]]
+def resource_path(relative_path: str) -> str:
+    """Devuelve una ruta válida tanto en desarrollo como en ejecutables."""
+
+    base_path: Path
+    if hasattr(sys, "_MEIPASS"):
+        base_path = Path(getattr(sys, "_MEIPASS"))  # type: ignore[attr-defined]
+    else:
+        base_path = Path(__file__).resolve().parent.parent
+    return str((base_path / relative_path).resolve())
 
 
-def extract_archive(archive_path: str, dest_dir: str, progress: ProgressCallback = None) -> None:
+def extract_archive(archive_path: str, dest_dir: str) -> None:
+
     """Descomprime ``archive_path`` en ``dest_dir``.
 
     Si se proporciona ``progress`` se llamará periódicamente con la cantidad

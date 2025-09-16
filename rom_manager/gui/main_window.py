@@ -9,14 +9,14 @@ import json
 import logging
 import sqlite3
 import math
-from typing import Optional, List
+from typing import Optional, List, Dict, Sequence
 
 from PyQt6.QtCore import Qt, QThreadPool, QTimer, QUrl, QEvent, QObject
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout, QLabel, QLineEdit,
     QPushButton, QFileDialog, QGroupBox, QComboBox, QSpinBox, QTableView, QTableWidget,
     QTableWidgetItem, QHeaderView, QMessageBox, QProgressBar, QCheckBox, QTabWidget,
-    QAbstractItemView, QMenu, QStyle, QSystemTrayIcon
+    QAbstractItemView, QListWidget, QListWidgetItem, QMenu, QStyle, QSystemTrayIcon
 )
 from PyQt6.QtGui import QDesktopServices, QIcon
 
@@ -25,7 +25,9 @@ from ..models import LinksTableModel
 from ..download import DownloadManager, DownloadItem, ExtractionTask
 from ..emulators import EmulatorInfo, get_all_systems, get_emulator_catalog, get_emulators_for_system
 from ..paths import config_path, session_path
-from ..utils import safe_filename
+
+from ..utils import safe_filename, extract_archive, resource_path
+
 
 # -----------------------------
 # Ventana principal con pestañas (paridad JavaFX)
@@ -39,7 +41,12 @@ class MainWindow(QMainWindow):
     """
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("ROM Manager — Paridad JavaFX")
+        icon_path = resource_path("resources/romMan.ico")
+        if os.path.exists(icon_path):
+            icon = QIcon(icon_path)
+            if not icon.isNull():
+                self.setWindowIcon(icon)
+        self.setWindowTitle("RomManager AB")
         self.resize(1200, 800)
         self.pool = QThreadPool.globalInstance()
         self.db: Optional[Database] = None
@@ -150,12 +157,12 @@ class MainWindow(QMainWindow):
         if not QSystemTrayIcon.isSystemTrayAvailable():
             return
         tray = QSystemTrayIcon(self)
-        icon_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'resources', 'romMan.ico'))
+        icon_path = resource_path("resources/romMan.ico")
         if os.path.exists(icon_path):
             icon = QIcon(icon_path)
             if not icon.isNull():
                 tray.setIcon(icon)
-        tray.setToolTip("ROM Manager — Descargas en segundo plano")
+        tray.setToolTip("RomManager AB — Descargas en segundo plano")
         menu = QMenu(self)
         show_action = menu.addAction("Mostrar ventana")
         show_action.triggered.connect(self._restore_from_tray)
@@ -183,7 +190,7 @@ class MainWindow(QMainWindow):
             self.tray_icon.show()
         if QSystemTrayIcon.supportsMessages() and not self._tray_message_shown:
             self.tray_icon.showMessage(
-                'ROM Manager',
+                'RomManager AB',
                 'Las descargas continúan en segundo plano. Haz doble clic en el icono para volver a abrir la ventana.',
                 QSystemTrayIcon.MessageIcon.Information,
                 5000,
@@ -419,10 +426,16 @@ class MainWindow(QMainWindow):
         url_layout.addWidget(self.btn_emulator_open_url)
         form.addRow("URL de descarga:", url_container)
 
-        self.lbl_emulator_extras = QLabel("—")
-        self.lbl_emulator_extras.setWordWrap(True)
-        self.lbl_emulator_extras.setOpenExternalLinks(True)
-        form.addRow("Descargas extra:", self.lbl_emulator_extras)
+        self.list_emulator_extras = QListWidget()
+        self.list_emulator_extras.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.list_emulator_extras.itemSelectionChanged.connect(self._on_extra_selection_changed)
+        self.list_emulator_extras.itemDoubleClicked.connect(lambda _: self._download_selected_extra())
+        form.addRow("Archivos extra:", self.list_emulator_extras)
+
+        self.btn_emulator_download_extra = QPushButton("Descargar archivo extra")
+        self.btn_emulator_download_extra.setEnabled(False)
+        self.btn_emulator_download_extra.clicked.connect(self._download_selected_extra)
+        form.addRow("", self.btn_emulator_download_extra)
 
         self.lbl_emulator_notes = QLabel("—")
         self.lbl_emulator_notes.setWordWrap(True)
@@ -466,6 +479,31 @@ class MainWindow(QMainWindow):
         else:
             self._update_emulator_details(None)
 
+    def _reset_extra_list(self, message: str = "No hay archivos extra disponibles") -> None:
+        if not hasattr(self, "list_emulator_extras"):
+            return
+        self.list_emulator_extras.blockSignals(True)
+        self.list_emulator_extras.clear()
+        self.list_emulator_extras.blockSignals(False)
+        item = QListWidgetItem(message)
+        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+        self.list_emulator_extras.addItem(item)
+        self.list_emulator_extras.setEnabled(False)
+        if hasattr(self, "btn_emulator_download_extra"):
+            self.btn_emulator_download_extra.setEnabled(False)
+
+    def _populate_extra_list(self, extras: Sequence[Dict[str, str]]) -> None:
+        self.list_emulator_extras.blockSignals(True)
+        self.list_emulator_extras.clear()
+        for extra in extras:
+            label = extra.get("label") or extra.get("url") or "Archivo extra"
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, extra)
+            self.list_emulator_extras.addItem(item)
+        self.list_emulator_extras.blockSignals(False)
+        self.list_emulator_extras.setEnabled(bool(extras))
+        self._on_extra_selection_changed()
+
     def _on_emulator_selected(self, index: int) -> None:
         emu = self.cmb_emulator.currentData()
         if isinstance(emu, EmulatorInfo):
@@ -473,12 +511,24 @@ class MainWindow(QMainWindow):
         else:
             self._update_emulator_details(None)
 
+    def _on_extra_selection_changed(self) -> None:
+        if not hasattr(self, "btn_emulator_download_extra"):
+            return
+        has_selection = bool(self.list_emulator_extras.selectedItems()) and self.list_emulator_extras.isEnabled()
+        self.btn_emulator_download_extra.setEnabled(has_selection)
+
+    def _extra_folder_name(self, label: str, url: str) -> str:
+        text = f"{label} {url}".lower()
+        if "bios" in text:
+            return "BIOS"
+        return "Archivos extras"
+
     def _update_emulator_details(self, emulator: Optional[EmulatorInfo]) -> None:
         self._current_emulator = emulator
         if not emulator:
             self.lbl_emulator_systems.setText("—")
             self.le_emulator_url.setText("")
-            self.lbl_emulator_extras.setText("—")
+            self._reset_extra_list("Selecciona un emulador para ver archivos extra")
             self.lbl_emulator_notes.setText("—")
             self.btn_emulator_download.setEnabled(False)
             self.btn_emulator_open_url.setEnabled(False)
@@ -490,15 +540,9 @@ class MainWindow(QMainWindow):
         self.btn_emulator_open_url.setEnabled(bool(emulator.url))
         self.btn_emulator_download.setEnabled(bool(emulator.url))
         if emulator.extras:
-            links = []
-            for extra in emulator.extras:
-                label = extra.get("label", extra.get("url", ""))
-                url = extra.get("url", "")
-                if url:
-                    links.append(f"<a href=\"{url}\">{label}</a>")
-            self.lbl_emulator_extras.setText("<br/>".join(links) if links else "—")
+            self._populate_extra_list(emulator.extras)
         else:
-            self.lbl_emulator_extras.setText("—")
+            self._reset_extra_list()
         self.lbl_emulator_notes.setText(emulator.notes or "—")
 
     def _choose_emulator_dir(self) -> None:
@@ -560,8 +604,76 @@ class MainWindow(QMainWindow):
         self._bind_item_signals(download_item)
         self.items.append(download_item)
 
-    def _handle_emulator_install(self, item: DownloadItem, archive_path: Optional[str] = None) -> None:
-        dest_file = archive_path or os.path.join(item.dest_dir, safe_filename(item.name))
+
+    def _download_selected_extra(self) -> None:
+        base_dir = self.le_emulator_dir.text().strip()
+        if not base_dir:
+            QMessageBox.warning(self, "Emuladores", "Selecciona una carpeta base para los emuladores.")
+            return
+        system_value = self.cmb_emulator_system.currentData()
+        if not system_value or system_value == "__all__":
+            QMessageBox.information(self, "Emuladores", "Selecciona un sistema concreto para clasificar los archivos extra.")
+            return
+        emulator = self._current_emulator
+        if not isinstance(emulator, EmulatorInfo):
+            QMessageBox.information(self, "Emuladores", "Selecciona un emulador válido.")
+            return
+        selected_items = [item for item in self.list_emulator_extras.selectedItems() if item.flags() & Qt.ItemFlag.ItemIsSelectable]
+        if not selected_items:
+            QMessageBox.information(self, "Emuladores", "Selecciona al menos un archivo extra.")
+            return
+
+        system_dir = os.path.join(base_dir, safe_filename(str(system_value)))
+        emulator_dir = os.path.join(system_dir, safe_filename(emulator.name))
+        os.makedirs(emulator_dir, exist_ok=True)
+
+        for list_item in selected_items:
+            extra = list_item.data(Qt.ItemDataRole.UserRole) or {}
+            if not isinstance(extra, dict):
+                continue
+            url = (extra.get("url") or "").strip()
+            if not url:
+                QMessageBox.warning(self, "Emuladores", f"El archivo extra '{list_item.text()}' no tiene una URL válida.")
+                continue
+            label = extra.get("label") or list_item.text() or os.path.basename(url) or "Archivo extra"
+            folder_name = self._extra_folder_name(label, url)
+            final_dir = os.path.join(emulator_dir, folder_name)
+            os.makedirs(final_dir, exist_ok=True)
+
+            if any(x.url == url and x.dest_dir == final_dir for x in self.items):
+                logging.debug("Extra already enqueued: %s -> %s", url, final_dir)
+                continue
+
+            name = self._build_download_name(url)
+            metadata = {
+                "emulator_name": emulator.name,
+                "system": str(system_value),
+                "extra_label": label,
+                "folder_name": folder_name,
+                "delete_archive": True,
+            }
+            download_item = DownloadItem(
+                name=name,
+                url=url,
+                dest_dir=final_dir,
+                system_name=str(system_value),
+                category="emulator-extra",
+                metadata=metadata,
+            )
+            row = {
+                "display_name": f"{emulator.name} — {label}",
+                "system_name": str(system_value),
+                "fmt": folder_name,
+                "size": "",
+            }
+            self._add_download_row(download_item, row)  # type: ignore[arg-type]
+            self.manager.enqueue(download_item)
+            self._bind_item_signals(download_item)
+            self.items.append(download_item)
+
+    def _handle_emulator_install(self, item: DownloadItem) -> None:
+        dest_file = os.path.join(item.dest_dir, safe_filename(item.name))
+
         if not os.path.exists(dest_file):
             logging.warning("Archivo de emulador no encontrado tras la descarga: %s", dest_file)
             if item.row is not None and 0 <= item.row < self.table_dl.rowCount():
@@ -579,6 +691,54 @@ class MainWindow(QMainWindow):
             delete_archive=delete_archive,
             success_status='Instalado',
         )
+
+    def _should_extract_extra(self, file_path: str) -> bool:
+        path = Path(file_path)
+        suffixes = [s.lower() for s in path.suffixes]
+        if not suffixes:
+            return False
+        if suffixes[-1] in {'.zip', '.7z'}:
+            return True
+        if suffixes[-1] == '.tar':
+            return True
+        if len(suffixes) >= 2 and suffixes[-2] == '.tar' and suffixes[-1] in {'.gz', '.bz2', '.xz'}:
+            return True
+        return False
+
+    def _handle_emulator_extra(self, item: DownloadItem) -> None:
+        dest_file = os.path.join(item.dest_dir, safe_filename(item.name))
+        if not os.path.exists(dest_file):
+            logging.warning("Archivo extra no encontrado tras la descarga: %s", dest_file)
+            return
+
+        metadata = item.metadata if isinstance(item.metadata, dict) else {}
+        label = metadata.get("extra_label") or os.path.basename(dest_file)
+        delete_archive = bool(metadata.get("delete_archive", True))
+        extracted = False
+        extraction_failed = False
+
+        if self._should_extract_extra(dest_file):
+            try:
+                extract_archive(dest_file, item.dest_dir)
+                extracted = True
+            except Exception as exc:
+                extraction_failed = True
+                logging.exception("Error extracting extra archive %s", dest_file)
+                QMessageBox.warning(
+                    self,
+                    "Emuladores",
+                    f"No se pudo descomprimir {label}.\n{exc}",
+                )
+            else:
+                if delete_archive:
+                    try:
+                        os.remove(dest_file)
+                    except Exception:
+                        logging.exception("Error deleting extra archive %s", dest_file)
+
+        status_text = "Extra instalado" if extracted else ("Error al descomprimir" if extraction_failed else "Extra descargado")
+        if item.row is not None and 0 <= item.row < self.table_dl.rowCount():
+            self.table_dl.item(item.row, 4).setText(status_text)
 
     # --- Descargas ---
     def _build_downloads_tab(self) -> None:
@@ -984,12 +1144,13 @@ class MainWindow(QMainWindow):
                 logging.debug("Download failed for %s: %s", it.name, msg)
             return
 
-        archive_path = msg if isinstance(msg, str) and os.path.exists(msg) else os.path.join(it.dest_dir, safe_filename(it.name))
+        category = getattr(it, 'category', '')
+        if category == 'emulator':
+            self._handle_emulator_install(it)
 
-        if getattr(it, 'category', '') == 'emulator':
-            logging.debug("Download finished for emulator %s, starting extraction", it.name)
-            self.table_dl.item(it.row, 4).setText('Preparando extracción')
-            self._handle_emulator_install(it, archive_path)
+            return
+        if category == 'emulator-extra':
+            self._handle_emulator_extra(it)
             return
 
         start_rom_extraction = False
@@ -1596,6 +1757,17 @@ class MainWindow(QMainWindow):
                     'fmt': '',
                     'size': '',
                 }
+                if category == 'emulator':
+                    dummy_row['fmt'] = 'Emulador'
+                    if metadata:
+                        dummy_row['display_name'] = metadata.get('emulator_name', name)
+                elif category == 'emulator-extra':
+                    folder_name = metadata.get('folder_name', 'Archivos extras') if metadata else 'Archivos extras'
+                    dummy_row['fmt'] = folder_name
+                    if metadata:
+                        extra_label = metadata.get('extra_label', name)
+                        emulator_name = metadata.get('emulator_name', '')
+                        dummy_row['display_name'] = f"{emulator_name} — {extra_label}".strip(" —")
                 if os.path.exists(final_path):
                     self._add_download_row(it, dummy_row, loaded=True)  # type: ignore[arg-type]
                     self.items.append(it)
@@ -1678,6 +1850,17 @@ class MainWindow(QMainWindow):
                     'fmt': '',
                     'size': '',
                 }
+                if category == 'emulator':
+                    dummy_row['fmt'] = 'Emulador'
+                    if metadata:
+                        dummy_row['display_name'] = metadata.get('emulator_name', name)
+                elif category == 'emulator-extra':
+                    folder_name = metadata.get('folder_name', 'Archivos extras') if metadata else 'Archivos extras'
+                    dummy_row['fmt'] = folder_name
+                    if metadata:
+                        extra_label = metadata.get('extra_label', name)
+                        emulator_name = metadata.get('emulator_name', '')
+                        dummy_row['display_name'] = f"{emulator_name} — {extra_label}".strip(" —")
                 if os.path.exists(final_path):
                     self._add_download_row(it, dummy_row, loaded=True)  # type: ignore[arg-type]
                     self.items.append(it)

@@ -1,4 +1,4 @@
-"""Punto de entrada independiente para la aplicación ROM Manager.
+"""Punto de entrada independiente para la aplicación RomManager AB.
 
 Este módulo prepara la configuración de logging, captura excepciones no
 controladas y crea la aplicación PyQt6 utilizando la clase ``MainWindow``
@@ -9,10 +9,12 @@ aplicación de inmediato.
 
 from __future__ import annotations
 
+import os
 import sys
 import logging
 
 from rom_manager.paths import ensure_app_directories, log_path
+from rom_manager.utils import resource_path
 
 
 def _setup_logging() -> None:
@@ -50,6 +52,7 @@ def _setup_logging() -> None:
 def main() -> None:
     _setup_logging()
     from PyQt6.QtWidgets import QApplication  # Importar tras configurar logging
+    from PyQt6.QtGui import QIcon
     from rom_manager.gui import MainWindow
 
     class Application(QApplication):
@@ -63,6 +66,11 @@ def main() -> None:
                 return False
 
     app = Application(sys.argv)
+    icon_path = resource_path(os.path.join("resources", "romMan.ico"))
+    if os.path.exists(icon_path):
+        icon = QIcon(icon_path)
+        if not icon.isNull():
+            app.setWindowIcon(icon)
     win = MainWindow()
     win.show()
     sys.exit(app.exec())

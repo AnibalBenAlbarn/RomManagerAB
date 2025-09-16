@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-"""Spec de PyInstaller para generar el ejecutable de ROM Manager."""
+"""Spec de PyInstaller para generar el ejecutable de RomManager AB."""
 
 from pathlib import Path
 
