@@ -34,9 +34,9 @@ The *Emulators* tab offers a filtered dropdown per system, notes, and extra down
 Add items from search results or the basket to the queue. The manager enforces concurrency limits, streams to `.part` files, and swaps them atomically once finished. You can persist and restore sessions, enabling long-term batch transfers without losing progress.【F:rom_manager/download.py†L1-L341】【F:rom_manager/gui/main_window.py†L118-L207】【F:rom_manager/gui/main_window.py†L1408-L1546】
 
 ### Building a desktop release
-Create a standalone executable with PyInstaller:
+Create a standalone executable with PyInstaller using the bundled spec file:
 ```bash
-pyinstaller --noconfirm --clean --name "RomManager" --add-data "resources/romMan.ico;resources" --windowed rom_manager/main.py
+pyinstaller --noconfirm --clean RomManager.spec
 ```
 The generated binary recreates the same directory layout (`logs/`, `config/`, `sessions/`) alongside the executable when shipped.【F:BUILDING.md†L1-L14】
 
@@ -81,9 +81,9 @@ La pestaña *Emuladores* ofrece desplegables filtrados por sistema, notas y enla
 Añade elementos desde los resultados o la cesta a la cola. El gestor respeta el límite de concurrencia, escribe en archivos `.part` y los reemplaza al terminar. Puedes guardar y restaurar sesiones para reanudar lotes largos sin perder progreso.【F:rom_manager/download.py†L1-L341】【F:rom_manager/gui/main_window.py†L118-L207】【F:rom_manager/gui/main_window.py†L1408-L1546】
 
 ### Generar un ejecutable de escritorio
-Crea un ejecutable independiente con PyInstaller:
+Crea un ejecutable independiente con PyInstaller utilizando el spec incluido:
 ```bash
-pyinstaller --noconfirm --clean --name "RomManager" --add-data "resources/romMan.ico;resources" --windowed rom_manager/main.py
+pyinstaller --noconfirm --clean RomManager.spec
 ```
 El binario generado recrea la misma estructura de carpetas (`logs/`, `config/`, `sessions/`) junto al ejecutable al distribuirlo.【F:BUILDING.md†L1-L14】
 
