@@ -16,9 +16,9 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QLineEdit,
     QPushButton, QFileDialog, QGroupBox, QComboBox, QSpinBox, QTableView, QTableWidget,
     QTableWidgetItem, QHeaderView, QMessageBox, QProgressBar, QCheckBox, QTabWidget,
-    QAbstractItemView, QMenu, QStyle
+    QAbstractItemView, QMenu, QStyle, QSystemTrayIcon
 )
-from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtGui import QDesktopServices, QIcon
 
 from ..database import Database
 from ..models import LinksTableModel
@@ -58,6 +58,12 @@ class MainWindow(QMainWindow):
         self.manager.queue_changed.connect(self._check_background_downloads)
         self.background_downloads: bool = False
         self.items: List[DownloadItem] = []
+        self.tray_icon: Optional[QSystemTrayIcon] = None
+        self._tray_menu: Optional[QMenu] = None
+        self._tray_show_action = None
+        self._tray_exit_action = None
+        self._tray_message_shown: bool = False
+        self._setup_tray_icon()
 
         # Cesta de descargas (agrupa ROMs) y estructura de búsqueda
         # Es importante inicializar estos diccionarios antes de construir las pestañas,
@@ -117,6 +123,76 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         logging.debug("MainWindow initialized. Tabs and settings loaded.")
+
+    # --- Icono de bandeja del sistema ---
+    def _setup_tray_icon(self) -> None:
+        """Configura el icono de la bandeja del sistema para el modo en segundo plano."""
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return
+        tray = QSystemTrayIcon(self)
+        icon_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'resources', 'romMan.ico'))
+        if os.path.exists(icon_path):
+            icon = QIcon(icon_path)
+            if not icon.isNull():
+                tray.setIcon(icon)
+        tray.setToolTip("ROM Manager — Descargas en segundo plano")
+        menu = QMenu(self)
+        show_action = menu.addAction("Mostrar ventana")
+        show_action.triggered.connect(self._restore_from_tray)
+        exit_action = menu.addAction("Salir")
+        exit_action.triggered.connect(self._quit_from_tray)
+        tray.setContextMenu(menu)
+        tray.activated.connect(self._on_tray_icon_activated)
+        tray.hide()
+        self.tray_icon = tray
+        self._tray_menu = menu
+        self._tray_show_action = show_action
+        self._tray_exit_action = exit_action
+
+    def _enter_background_mode(self) -> bool:
+        """Activa el modo en segundo plano mostrando el icono de bandeja."""
+        if not self.tray_icon:
+            QMessageBox.warning(
+                self,
+                'Descargas en segundo plano',
+                'No es posible ejecutar en segundo plano porque el sistema no permite iconos en la bandeja.'
+            )
+            return False
+        self.background_downloads = True
+        if not self.tray_icon.isVisible():
+            self.tray_icon.show()
+        if QSystemTrayIcon.supportsMessages() and not self._tray_message_shown:
+            self.tray_icon.showMessage(
+                'ROM Manager',
+                'Las descargas continúan en segundo plano. Haz doble clic en el icono para volver a abrir la ventana.',
+                QSystemTrayIcon.MessageIcon.Information,
+                5000,
+            )
+            self._tray_message_shown = True
+        return True
+
+    def _restore_from_tray(self) -> None:
+        """Restaura la ventana principal desde el icono de la bandeja."""
+        if self.tray_icon and self.tray_icon.isVisible():
+            self.tray_icon.hide()
+        self.background_downloads = False
+        self.showNormal()
+        self.show()
+        self.activateWindow()
+        try:
+            self.raise_()
+        except Exception:
+            pass
+
+    def _on_tray_icon_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
+        """Responde a la interacción del usuario con el icono de la bandeja."""
+        if reason in (QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.DoubleClick):
+            self._restore_from_tray()
+
+    def _quit_from_tray(self) -> None:
+        """Cierra la aplicación desde el icono de la bandeja."""
+        self.background_downloads = False
+        self.close()
 
     # --- Base de datos ---
     def _build_db_tab(self) -> None:
@@ -1137,6 +1213,8 @@ class MainWindow(QMainWindow):
                 self._save_config()
             except Exception:
                 pass
+            if self.tray_icon and self.tray_icon.isVisible():
+                self.tray_icon.hide()
             QApplication.instance().quit()
 
     # --- Persistencia de sesión (Ajustes de descarga) ---
@@ -1949,10 +2027,10 @@ class MainWindow(QMainWindow):
             resp = box.exec()
             if resp == QMessageBox.StandardButton.Yes:
                 if chk.isChecked():
-                    self.background_downloads = True
-                    self.hide()
-                    event.ignore()
-                    return
+                    if self._enter_background_mode():
+                        self.hide()
+                        event.ignore()
+                        return
             else:
                 event.ignore()
                 return
@@ -1962,6 +2040,9 @@ class MainWindow(QMainWindow):
             self._save_config()
         except Exception:
             pass
+        if self.tray_icon and self.tray_icon.isVisible():
+            self.tray_icon.hide()
+        self.background_downloads = False
         event.accept()
     # --- utilidades de formato ---
     @staticmethod
