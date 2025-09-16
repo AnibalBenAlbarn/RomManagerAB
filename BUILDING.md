@@ -6,14 +6,18 @@ ellas se guardan los registros (`logs/rom_manager.log`), la configuración en
 JSON (`config/settings.json`) y las sesiones de descarga (`sessions/*.json`).
 
 Para generar el ejecutable con PyInstaller desde la raíz del repositorio se
-puede utilizar el siguiente comando en una sola línea:
+incluye el archivo ``RomManager.spec``. Dicho spec fija la ruta del icono y de
+los recursos utilizando rutas absolutas, evitando errores cuando el comando se
+lanza desde otro directorio. Basta con ejecutar:
 
 ```
-pyinstaller --noconfirm --clean --name=RomManager --icon=resources/romMan.ico --add-data "resources/romMan.ico;resources" --windowed rom_manager/main.py
+pyinstaller --noconfirm --clean RomManager.spec
 ```
 
-El parámetro ``--icon`` asigna el icono ``romMan.ico`` al ejecutable generado,
-mientras que ``--name`` define el nombre final del binario.
+PyInstaller leerá el spec y generará el binario ``RomManager/RomManager.exe``
+con el icono ``romMan.ico`` incrustado, además de copiar el fichero en la
+carpeta ``resources`` del directorio de salida para que la aplicación pueda
+referenciarlo.
 
 El ejecutable resultante heredará la misma estructura de carpetas cuando se
 publique o distribuya.
