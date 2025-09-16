@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from urllib.parse import urlsplit, unquote
 import json
 import logging
@@ -10,7 +11,7 @@ import sqlite3
 import math
 from typing import Optional, List
 
-from PyQt6.QtCore import Qt, QThreadPool, QTimer, QSettings, QUrl, QEvent, QObject
+from PyQt6.QtCore import Qt, QThreadPool, QTimer, QUrl, QEvent, QObject
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout, QLabel, QLineEdit,
     QPushButton, QFileDialog, QGroupBox, QComboBox, QSpinBox, QTableView, QTableWidget,
@@ -23,6 +24,7 @@ from ..database import Database
 from ..models import LinksTableModel
 from ..download import DownloadManager, DownloadItem
 from ..emulators import EmulatorInfo, get_all_systems, get_emulator_catalog, get_emulators_for_system
+from ..paths import config_path, session_path
 from ..utils import safe_filename, extract_archive
 
 # -----------------------------
@@ -41,7 +43,7 @@ class MainWindow(QMainWindow):
         self.resize(1200, 800)
         self.pool = QThreadPool.globalInstance()
         self.db: Optional[Database] = None
-        self.session_file = ''
+        self.session_file = str(self._session_storage_path())
 
         # Preferencias del usuario
         # Flag para omitir la confirmación al cancelar descargas
@@ -126,6 +128,23 @@ class MainWindow(QMainWindow):
         logging.debug("MainWindow initialized. Tabs and settings loaded.")
 
     # --- Icono de bandeja del sistema ---
+    def _session_storage_path(self, download_dir: Optional[str] = None) -> Path:
+        """Calcula la ruta de almacenamiento para la sesión de descargas."""
+
+        folder_name = Path(download_dir).name if download_dir else ""
+        safe_name = safe_filename(folder_name) if folder_name else ""
+        filename = (
+            f"{safe_name}_downloads_session.json"
+            if safe_name
+            else "downloads_session.json"
+        )
+        return session_path(filename)
+
+    def _config_file_path(self) -> Path:
+        """Ruta del fichero JSON donde se guarda la configuración."""
+
+        return config_path("settings.json")
+
     def _setup_tray_icon(self) -> None:
         """Configura el icono de la bandeja del sistema para el modo en segundo plano."""
         if not QSystemTrayIcon.isSystemTrayAvailable():
@@ -637,7 +656,7 @@ class MainWindow(QMainWindow):
         d = QFileDialog.getExistingDirectory(self, "Carpeta de descargas")
         if d:
             self.le_dir.setText(d)
-            self.session_file = os.path.join(d, 'sessions', 'downloads_session.json')
+            self.session_file = str(self._session_storage_path(d))
 
     def _connect_db(self) -> None:
         """Conecta a la base de datos y carga los filtros."""
@@ -1387,11 +1406,14 @@ class MainWindow(QMainWindow):
 
     # --- Persistencia de sesión (Ajustes de descarga) ---
     def _session_path(self) -> str:
-        """Devuelve la ruta del fichero de sesión en la carpeta de descargas."""
-        base = self.le_dir.text().strip() or os.getcwd()
-        session_dir = os.path.join(base, 'sessions')
-        os.makedirs(session_dir, exist_ok=True)
-        return os.path.join(session_dir, 'downloads_session.json')
+        """Devuelve la ruta del fichero de sesión dentro de ``sessions``."""
+
+        if self.session_file:
+            path = Path(self.session_file)
+        else:
+            path = self._session_storage_path(self.le_dir.text().strip() or None)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return str(path)
 
     def _save_session(self) -> None:
         """Guarda la sesión actual de descargas a disco."""
@@ -1557,18 +1579,9 @@ class MainWindow(QMainWindow):
 
     # --- Guardar/cargar configuración y cesta ---
     def _save_config(self) -> None:
-        """Guarda la configuración y la cesta en QSettings."""
+        """Guarda la configuración de la aplicación en ``config/settings.json``."""
+
         try:
-            settings = QSettings('RomManager', 'App')
-            settings.setValue('db_path', self.le_db.text().strip())
-            settings.setValue('download_dir', self.le_dir.text().strip())
-            settings.setValue('concurrency', self.spin_conc.value())
-            settings.setValue('chk_extract_after', self.chk_extract_after.isChecked())
-            settings.setValue('chk_delete_after', self.chk_delete_after.isChecked())
-            settings.setValue('chk_create_sys_dirs', self.chk_create_sys_dirs.isChecked())
-            settings.setValue('emulator_dir', self.le_emulator_dir.text().strip())
-            settings.setValue('emulator_delete_archive', self.chk_emulator_delete.isChecked())
-            # Guardar cesta
             basket_data = []
             for rom_id, item in self.basket_items.items():
                 basket_data.append({
@@ -1577,26 +1590,48 @@ class MainWindow(QMainWindow):
                     'selected_format': item.get('selected_format', 0),
                     'selected_lang': item.get('selected_lang', 0),
                 })
-            settings.setValue('basket_items', json.dumps(basket_data))
-            # Guardar preferencia de confirmación de cancelación
-            settings.setValue('no_confirm_cancel', self.no_confirm_cancel)
-            settings.setValue('hide_server_warning', self.hide_server_warning)
-            settings.sync()
+
+            payload = {
+                'db_path': self.le_db.text().strip(),
+                'download_dir': self.le_dir.text().strip(),
+                'concurrency': self.spin_conc.value(),
+                'chk_extract_after': self.chk_extract_after.isChecked(),
+                'chk_delete_after': self.chk_delete_after.isChecked(),
+                'chk_create_sys_dirs': self.chk_create_sys_dirs.isChecked(),
+                'emulator_dir': self.le_emulator_dir.text().strip(),
+                'emulator_delete_archive': self.chk_emulator_delete.isChecked(),
+                'basket_items': basket_data,
+                'no_confirm_cancel': self.no_confirm_cancel,
+                'hide_server_warning': self.hide_server_warning,
+                'session_file': self.session_file,
+            }
+
+            path = self._config_file_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open('w', encoding='utf-8') as fh:
+                json.dump(payload, fh, ensure_ascii=False, indent=2)
         except Exception:
-            pass
+            logging.exception('Failed to save configuration', exc_info=True)
 
     def _load_config(self) -> None:
-        """Carga la configuración desde QSettings y aplica valores a los widgets."""
+        """Carga la configuración desde ``config/settings.json``."""
+
         try:
-            settings = QSettings('RomManager', 'App')
-            db_path = settings.value('db_path', '', type=str)
-            download_dir = settings.value('download_dir', '', type=str)
-            conc = settings.value('concurrency', 3, type=int)
-            chk_extract = settings.value('chk_extract_after', False, type=bool)
-            chk_del = settings.value('chk_delete_after', False, type=bool)
-            chk_sys = settings.value('chk_create_sys_dirs', False, type=bool)
-            emulator_dir = settings.value('emulator_dir', '', type=str)
-            emulator_delete = settings.value('emulator_delete_archive', False, type=bool)
+            data: dict = {}
+            path = self._config_file_path()
+            if path.exists():
+                with path.open('r', encoding='utf-8') as fh:
+                    data = json.load(fh)
+
+            db_path = str(data.get('db_path', '') or '')
+            download_dir = str(data.get('download_dir', '') or '')
+            conc = int(data.get('concurrency', 3) or 3)
+            chk_extract = bool(data.get('chk_extract_after', False))
+            chk_del = bool(data.get('chk_delete_after', False))
+            chk_sys = bool(data.get('chk_create_sys_dirs', False))
+            emulator_dir = str(data.get('emulator_dir', '') or '')
+            emulator_delete = bool(data.get('emulator_delete_archive', False))
+
             self.le_db.setText(db_path)
             self.le_dir.setText(download_dir)
             self.spin_conc.setValue(conc)
@@ -1606,20 +1641,29 @@ class MainWindow(QMainWindow):
             self.chk_create_sys_dirs.setChecked(chk_sys)
             self.le_emulator_dir.setText(emulator_dir)
             self.chk_emulator_delete.setChecked(emulator_delete)
-            # Restaurar archivo de sesión
-            if download_dir:
-                self.session_file = os.path.join(download_dir, 'sessions', 'downloads_session.json')
-            # Cargar datos de cesta guardados (en formato JSON) después de conectar BD
-            basket_json = settings.value('basket_items', '', type=str)
-            self._saved_basket_json = basket_json
-            # Restaurar preferencia de cancelación
-            self.no_confirm_cancel = settings.value('no_confirm_cancel', False, type=bool)
-            self.hide_server_warning = settings.value('hide_server_warning', False, type=bool)
+
+            session_file = data.get('session_file')
+            if isinstance(session_file, str) and session_file.strip():
+                self.session_file = session_file
+            else:
+                self.session_file = str(self._session_storage_path(download_dir))
+
+            basket_data = data.get('basket_items', [])
+            if isinstance(basket_data, str):
+                self._saved_basket_json = basket_data
+            elif isinstance(basket_data, list):
+                self._saved_basket_json = json.dumps(basket_data)
+            else:
+                self._saved_basket_json = ''
+
+            self.no_confirm_cancel = bool(data.get('no_confirm_cancel', False))
+            self.hide_server_warning = bool(data.get('hide_server_warning', False))
         except Exception:
+            logging.exception('Failed to load configuration', exc_info=True)
             self._saved_basket_json = ''
 
     def _load_basket_from_saved(self) -> None:
-        """Restaura la cesta guardada a partir del JSON almacenado en QSettings."""
+        """Restaura la cesta guardada a partir del JSON almacenado en configuración."""
         try:
             if not self._saved_basket_json:
                 return
