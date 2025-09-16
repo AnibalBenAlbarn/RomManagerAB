@@ -18,7 +18,7 @@ import logging
 import requests
 from PyQt6.QtCore import QObject, pyqtSignal, QRunnable, QThreadPool
 
-from .utils import safe_filename
+from .utils import safe_filename, extract_archive
 
 
 class DownloadSignals(QObject):
@@ -271,6 +271,7 @@ class DownloadItem:
     row: Optional[int] = None
     category: str = ""
     metadata: Optional[Dict[str, Any]] = None
+    extract_task: Optional['ExtractionTask'] = None
 
 
 class DownloadManager(QObject):
@@ -362,3 +363,25 @@ class DownloadManager(QObject):
     def cancel(self, it: DownloadItem) -> None:
         if it.task:
             it.task.cancel()
+
+
+class ExtractionTask(QRunnable):
+    """Tarea que ejecuta la extracción de un archivo en segundo plano."""
+
+    def __init__(self, archive_path: str, dest_dir: str) -> None:
+        super().__init__()
+        self.archive_path = archive_path
+        self.dest_dir = dest_dir
+        self.signals = DownloadSignals()
+
+    def run(self) -> None:  # pragma: no cover - depende de archivos externos
+        try:
+            self.signals.progress.emit(0, 1, 0.0, 0.0, 'Preparando extracción')
+
+            def report(done: int, total: int, status: str) -> None:
+                self.signals.progress.emit(done, total, 0.0, 0.0, status)
+
+            extract_archive(self.archive_path, self.dest_dir, progress=report)
+            self.signals.finished_ok.emit(self.dest_dir)
+        except Exception as exc:
+            self.signals.failed.emit(str(exc))
