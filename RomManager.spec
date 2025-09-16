@@ -4,9 +4,24 @@
 
 from pathlib import Path
 
+
+def _resolve_base_dir() -> Path:
+    """Obtiene el directorio base del proyecto.
+
+    Cuando PyInstaller ejecuta el ``spec`` el nombre ``__file__`` no siempre
+    está definido, por lo que calculamos la ruta a partir del directorio de
+    trabajo actual como alternativa.
+    """
+
+    try:
+        return Path(__file__).resolve().parent  # type: ignore[name-defined]
+    except NameError:
+        return Path.cwd()
+
+
 # Resolvemos rutas absolutas para que PyInstaller pueda localizar los recursos
 # aunque se invoque desde otro directorio.
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = _resolve_base_dir()
 ICON_PATH = BASE_DIR / "resources" / "romMan.ico"
 
 block_cipher = None
