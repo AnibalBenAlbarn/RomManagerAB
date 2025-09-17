@@ -107,13 +107,17 @@ class DownloadTask(QRunnable):
             final_path = os.path.join(self.dest_dir, safe_filename(self.file_name))
             part_path = final_path + '.part'
 
-            # Preparar cabeceras y calcular bytes descargados previamente
-            headers = dict(self.headers)
+            # Preparar cabeceras base y calcular bytes descargados previamente
+            base_headers = dict(self.headers)
             downloaded = 0
             if os.path.exists(part_path):
-                downloaded = os.path.getsize(part_path)
-                if downloaded > 0:
-                    headers['Range'] = f'bytes={downloaded}-'
+                try:
+                    downloaded = os.path.getsize(part_path)
+                except OSError:
+                    downloaded = 0
+            headers = dict(base_headers)
+            if downloaded > 0:
+                headers['Range'] = f'bytes={downloaded}-'
 
             # Crear sesión con pool de conexiones y reintentos
             session = requests.Session()
@@ -150,88 +154,144 @@ class DownloadTask(QRunnable):
             except Exception:
                 pass
 
-            # Iniciar la descarga en streaming, reintentando sin Range si hay 416
-            for attempt in range(2):
-                r = session.get(self.url, headers=headers, stream=True, allow_redirects=True,
-                                 timeout=(10, 60))
-                if r.status_code == 416 and 'Range' in headers and attempt == 0:
-                    r.close()
-                    headers.pop('Range', None)
+            # Iniciar la descarga en streaming con reintentos ante errores de red/SSL
+            max_attempts = 4
+            attempt = 0
+            last_error: Optional[Exception] = None
+            while attempt < max_attempts:
+                attempt += 1
+
+                # Recalcular bytes descargados (puede haber cambiado tras un fallo)
+                if os.path.exists(part_path):
+                    try:
+                        downloaded = os.path.getsize(part_path)
+                    except OSError:
+                        downloaded = 0
+                else:
                     downloaded = 0
-                    try:
-                        os.remove(part_path)
-                    except Exception:
-                        pass
-                    try:
-                        h = session.head(self.url, headers=headers, allow_redirects=True, timeout=(10, 15))
-                        if h.status_code in (200, 206):
-                            total = int(h.headers.get('Content-Length', '0'))
-                    except Exception:
-                        pass
+
+                headers = dict(base_headers)
+                if downloaded > 0:
+                    headers['Range'] = f'bytes={downloaded}-'
+
+                try:
+                    r = session.get(
+                        self.url,
+                        headers=headers,
+                        stream=True,
+                        allow_redirects=True,
+                        timeout=(10, 60),
+                    )
+                except requests.exceptions.RequestException as exc:
+                    last_error = exc
+                    logging.warning(
+                        "Intento %s fallido al iniciar descarga de %s: %s",
+                        attempt,
+                        self.url,
+                        exc,
+                    )
+                    time.sleep(min(2.0, 0.5 * attempt))
                     continue
-                if r.status_code not in (200, 206):
-                    self.signals.failed.emit(f"HTTP {r.status_code}")
+
+                try:
+                    if r.status_code == 416 and 'Range' in headers:
+                        r.close()
+                        headers.pop('Range', None)
+                        downloaded = 0
+                        try:
+                            os.remove(part_path)
+                        except Exception:
+                            pass
+                        try:
+                            h = session.head(self.url, headers=headers, allow_redirects=True, timeout=(10, 15))
+                            if h.status_code in (200, 206):
+                                total = int(h.headers.get('Content-Length', '0'))
+                        except Exception:
+                            pass
+                        last_error = RuntimeError('HTTP 416')
+                        time.sleep(min(2.0, 0.5 * attempt))
+                        continue
+
+                    if r.status_code not in (200, 206):
+                        self.signals.failed.emit(f"HTTP {r.status_code}")
+                        r.close()
+                        return
+
+                    # Si el servidor no soporta Range, reiniciar y sobrescribir el archivo
+                    append_mode = downloaded > 0 and r.status_code == 206
+                    if not append_mode:
+                        downloaded = 0
+
+                    # Ajustar 'total' de bytes según los encabezados
+                    cl = r.headers.get('Content-Length')
+                    if cl is not None:
+                        clen = int(cl)
+                        if r.status_code == 206 and 'Range' in headers and append_mode:
+                            total = clen + downloaded if total == 0 else total
+                        else:
+                            total = clen
+                    if 'Content-Range' in r.headers and append_mode:
+                        try:
+                            total_all = int(r.headers['Content-Range'].split('/')[-1])
+                            total = total_all
+                        except Exception:
+                            if total and total < downloaded:
+                                total = downloaded
+
+                    # Tamaño del chunk: 512 KB para reducir overhead y mejorar rendimiento
+                    chunk_size = 1024 * 512
+                    last_t = time.time()
+                    last_b = downloaded
+                    last_speed = 0.0
+                    last_eta = math.inf
+
+                    # Abrir archivo .part y escribir conforme se reciben datos
+                    mode = 'ab' if append_mode else 'wb'
+                    with open(part_path, mode) as f:
+                        for data in r.iter_content(chunk_size=chunk_size):
+                            # Cancelar descarga
+                            if self._cancel:
+                                self.signals.failed.emit('Cancelado')
+                                return
+                            # Pausa
+                            self._pause.wait()
+                            if not data:
+                                continue
+                            f.write(data)
+                            downloaded += len(data)
+
+                            # Calcular velocidad y ETA cada ~0.5 segundos
+                            now = time.time()
+                            dt = now - last_t
+                            if dt >= 0.5:
+                                delta = downloaded - last_b
+                                last_speed = delta / dt if dt > 0 else 0.0
+                                last_t = now
+                                last_b = downloaded
+                                if total and downloaded <= total and last_speed > 0:
+                                    last_eta = (total - downloaded) / last_speed
+                            # Emitir progreso
+                            self.signals.progress.emit(
+                                downloaded, total, float(last_speed), float(last_eta), 'Descargando'
+                            )
+                except (requests.exceptions.RequestException, OSError) as exc:
+                    last_error = exc
+                    logging.warning(
+                        "Intento %s interrumpido durante descarga de %s: %s",
+                        attempt,
+                        self.url,
+                        exc,
+                    )
+                    time.sleep(min(2.0, 0.5 * attempt))
+                    continue
+                finally:
                     r.close()
-                    return
 
-                # Si el servidor no soporta range y enviamos Range, reiniciar el conteo
-                if r.status_code == 200 and downloaded > 0:
-                    downloaded = 0
-
-                # Ajustar 'total' de bytes según los encabezados
-                cl = r.headers.get('Content-Length')
-                if cl is not None:
-                    clen = int(cl)
-                    if r.status_code == 206 and 'Range' in headers:
-                        # 206: el servidor envía el tamaño de la franja solicitada. Sumar descargado previo
-                        total = clen + downloaded if total == 0 else total
-                    else:
-                        total = clen
-                if 'Content-Range' in r.headers and downloaded:
-                    try:
-                        total_all = int(r.headers['Content-Range'].split('/')[-1])
-                        total = total_all
-                    except Exception:
-                        if total and total < downloaded:
-                            total = downloaded
-
-                # Tamaño del chunk: 512 KB para reducir overhead y mejorar rendimiento
-                chunk_size = 1024 * 512
-                last_t = time.time()
-                last_b = downloaded
-                last_speed = 0.0
-                last_eta = math.inf
-
-                # Abrir archivo .part y escribir conforme se reciben datos
-                with open(part_path, 'ab' if downloaded > 0 else 'wb') as f:
-                    for data in r.iter_content(chunk_size=chunk_size):
-                        # Cancelar descarga
-                        if self._cancel:
-                            self.signals.failed.emit('Cancelado')
-                            return
-                        # Pausa
-                        self._pause.wait()
-                        if not data:
-                            continue
-                        f.write(data)
-                        downloaded += len(data)
-
-                        # Calcular velocidad y ETA cada ~0.5 segundos
-                        now = time.time()
-                        dt = now - last_t
-                        if dt >= 0.5:
-                            delta = downloaded - last_b
-                            last_speed = delta / dt
-                            last_t = now
-                            last_b = downloaded
-                            if total and downloaded <= total and last_speed > 0:
-                                last_eta = (total - downloaded) / last_speed
-                        # Emitir progreso
-                        self.signals.progress.emit(
-                            downloaded, total, float(last_speed), float(last_eta), 'Descargando'
-                        )
-                r.close()
+                last_error = None
                 break
+
+            if last_error is not None:
+                raise last_error
 
             # Renombrar el archivo descargado correctamente
             if os.path.exists(final_path):
