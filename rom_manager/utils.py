@@ -39,6 +39,23 @@ def resource_path(relative_path: str) -> str:
 
 _PY7ZR_MODULE: ModuleType | None = None
 _PY7ZR_IMPORT_ERROR: BaseException | None = None
+
+try:  # pragma: no cover - depende de la instalación de py7zr
+    import py7zr as _py7zr_preloaded  # type: ignore
+except ModuleNotFoundError as exc:  # pragma: no cover - depende del entorno
+    _PY7ZR_IMPORT_ERROR = exc
+except Exception as exc:  # pragma: no cover - depende del entorno
+    _PY7ZR_IMPORT_ERROR = exc
+else:  # pragma: no cover - depende del entorno
+    _PY7ZR_MODULE = _py7zr_preloaded
+    try:  # pragma: no cover - depende de py7zr y sus extras
+        import pybcj  # type: ignore  # noqa: F401  # Referencia explícita para PyInstaller
+        import pyppmd  # type: ignore  # noqa: F401  # Referencia explícita para PyInstaller
+    except ModuleNotFoundError:
+        # Los códecs extra no siempre están disponibles, pero al intentar
+        # importarlos aquí le damos una pista a PyInstaller cuando sí lo están.
+        pass
+
 _PY7ZR_REQUIRED_MSG = (
     "py7zr es necesario para extraer archivos .7z. "
     "Instálalo con `pip install py7zr`."
