@@ -15,6 +15,7 @@ class EmulatorInfo:
     url: str
     notes: str = ""
     extras: Tuple[Dict[str, str], ...] = field(default_factory=tuple)
+    requires_bios: bool = False
 
     def supports(self, system: str) -> bool:
         target = system.strip().lower()
@@ -29,6 +30,8 @@ class EmulatorInfo:
             "version": "",
             "notes": self.notes,
         }
+        data["requires_bios"] = self.requires_bios
+        data["has_extras"] = bool(self.extras)
         return data
 
 
@@ -51,18 +54,39 @@ EMULATOR_CATALOG: Tuple[EmulatorInfo, ...] = (
             "Emulador multi-sistema de alta precisión para NES, SNES, Game Boy/Color/Advance, "
             "PC Engine y sistemas de 8 bits de SEGA, además de WonderSwan."
         ),
+        extras=(
+            {
+                "label": "BIOS Famicom Disk System",
+                "url": "https://zaco.au/lib/roms/fds/disksys.rom",
+            },
+        ),
+        requires_bios=True,
     ),
     EmulatorInfo(
         name="Nestopia UE",
         systems=("NES",),
         url="https://dl.emulator-zone.com/download.php/emulators/nes/nestopia/nestopia_1.52.0-win32.zip",
         notes="Emulador clásico y de código abierto para Nintendo NES.",
+        extras=(
+            {
+                "label": "BIOS Famicom Disk System",
+                "url": "https://zaco.au/lib/roms/fds/disksys.rom",
+            },
+        ),
+        requires_bios=True,
     ),
     EmulatorInfo(
         name="FCEUX",
         systems=("NES",),
         url="https://github.com/TASEmulators/fceux/releases/download/v2.6.6/fceux-2.6.6-win32.zip",
         notes="Incluye herramientas TAS y depuración para NES.",
+        extras=(
+            {
+                "label": "BIOS Famicom Disk System",
+                "url": "https://zaco.au/lib/roms/fds/disksys.rom",
+            },
+        ),
+        requires_bios=True,
     ),
     EmulatorInfo(
         name="Snes9x",
@@ -111,6 +135,13 @@ EMULATOR_CATALOG: Tuple[EmulatorInfo, ...] = (
         systems=("PlayStation",),
         url="https://github.com/stenzek/duckstation/releases/download/latest/duckstation-windows-x64-release.zip",
         notes="Emulador moderno de PlayStation (PS1) con interfaz amigable y recompilador rápido.",
+        extras=(
+            {
+                "label": "BIOS PlayStation",
+                "url": "https://files.prodkeys.net/Latest-keys.txt.zip",
+            },
+        ),
+        requires_bios=True,
     ),
     EmulatorInfo(
         name="PPSSPP",
@@ -123,6 +154,17 @@ EMULATOR_CATALOG: Tuple[EmulatorInfo, ...] = (
         systems=("PlayStation 3",),
         url="https://github.com/RPCS3/rpcs3-binaries-win/releases/download/build-9c93ec0bc31bbc94ca4dce2a76ceea80da6f6554/rpcs3-v0.0.37-18022-9c93ec0b_win64_msvc.7z",
         notes="Emulador de PS3 que requiere firmware oficial para funcionar.",
+        extras=(
+            {
+                "label": "Firmware oficial PS3 (PUP)",
+                "url": "http://deu01.ps3.update.playstation.net/update/ps3/image/eu/2025_0305_c179ad173bbc08b55431d30947725a4b/PS3UPDAT.PUP",
+            },
+            {
+                "label": "Firmware oficial PS3 (mirror)",
+                "url": "https://www.techspot.com/drivers/downloadnowfile/17026/?evp=cf12c42d2092e7d6e84ee43e122c685b&file=25800",
+            },
+        ),
+        requires_bios=True,
     ),
     EmulatorInfo(
         name="Dolphin",
@@ -141,12 +183,26 @@ EMULATOR_CATALOG: Tuple[EmulatorInfo, ...] = (
         systems=("Nintendo 64", "Nintendo 64DD"),
         url="https://www.pj64-emu.com/download/project64-3-0-1-zip",
         notes="Emulador veterano de Nintendo 64 con soporte para la unidad 64DD.",
+        extras=(
+            {
+                "label": "BIOS Nintendo 64DD",
+                "url": "https://files.hiddenpalace.org/1/1a/64DD_IPL_Disk_%28v1.1%29.zip",
+            },
+        ),
+        requires_bios=True,
     ),
     EmulatorInfo(
         name="simple64",
         systems=("Nintendo 64", "Nintendo 64DD"),
         url="https://github.com/simple64/simple64/releases/latest/download/simple64-win64.zip",
         notes="Distribución lista para usar basada en mupen64plus-Next.",
+        extras=(
+            {
+                "label": "BIOS Nintendo 64DD",
+                "url": "https://files.hiddenpalace.org/1/1a/64DD_IPL_Disk_%28v1.1%29.zip",
+            },
+        ),
+        requires_bios=True,
     ),
     EmulatorInfo(
         name="Mednafen",
@@ -200,12 +256,30 @@ EMULATOR_CATALOG: Tuple[EmulatorInfo, ...] = (
         systems=("Wii U",),
         url="https://github.com/cemu-project/Cemu/releases/download/v2.6/cemu-2.6-windows-x64.zip",
         notes="Emulador de Wii U optimizado para hardware moderno.",
+        extras=(
+            {
+                "label": "Cemuhook",
+                "url": "https://files.sshnuke.net/cemuhook_1262d_0577.zip",
+            },
+            {
+                "label": "Keys Wii U",
+                "url": "https://files.prodkeys.net/Latest-keys.txt.zip",
+            },
+        ),
+        requires_bios=True,
     ),
     EmulatorInfo(
         name="PCSX2",
         systems=("PlayStation 2",),
         url="https://github.com/PCSX2/pcsx2/releases/download/v2.4.0/pcsx2-v2.4.0-windows-x64-Qt.7z",
         notes="Nueva interfaz Qt oficial para el emulador de PlayStation 2.",
+        extras=(
+            {
+                "label": "BIOS PlayStation 2",
+                "url": "https://ps2bios.gitlab.io/bios/",
+            },
+        ),
+        requires_bios=True,
     ),
     EmulatorInfo(
         name="Vita3K",
@@ -230,6 +304,7 @@ EMULATOR_CATALOG: Tuple[EmulatorInfo, ...] = (
                 "url": "https://github.com/K3V1991/Xbox-Emulator-Files/releases/download/v1/Xbox-Emulator-Files.zip",
             },
         ),
+        requires_bios=True,
     ),
     EmulatorInfo(
         name="Xenia (master)",
