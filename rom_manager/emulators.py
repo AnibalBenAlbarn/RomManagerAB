@@ -297,6 +297,134 @@ EMULATOR_CATALOG: Tuple[EmulatorInfo, ...] = (
         url="https://github.com/flyinghead/flycast/releases/download/v2.5/flycast-win64-2.5.zip",
         notes="Proyecto de código abierto para Dreamcast con soporte para NetLink y Naomi."
     ),
+    EmulatorInfo(
+        name="4DO",
+        systems=("3DO",),
+        url="https://dl.emulator-zone.com/download.php/emulators/3do/4do/4DO_1.3.2.4.zip",
+        notes="Emulador centrado en la consola 3DO con interfaz simplificada.",
+    ),
+    EmulatorInfo(
+        name="BigPEmu",
+        systems=("Atari Jaguar",),
+        url="https://www.richwhitehouse.com/jaguar/builds/BigPEmu_v119.zip",
+        notes="Emulador moderno de Atari Jaguar con soporte para Jaguar CD y mejoras visuales.",
+    ),
+    EmulatorInfo(
+        name="BizHawk",
+        systems=(
+            "NES",
+            "SNES",
+            "Game Boy",
+            "Game Boy Color",
+            "Game Boy Advance",
+            "PC Engine",
+            "PC Engine CD",
+            "Mega Drive / Genesis",
+            "Master System",
+            "32X",
+        ),
+        url="https://dl.emulator-zone.com/download.php/emulators/misc/bizhawk/BizHawk-2.10-win-x64.zip",
+        notes=(
+            "Multiemulador con enfoque en precisión y herramientas TAS. Incluye núcleos para sistemas "
+            "clásicos de Nintendo, SEGA y NEC."
+        ),
+    ),
+    EmulatorInfo(
+        name="ColEm",
+        systems=("ColecoVision",),
+        url="https://fms.komkon.org/ColEm/ColEm56-Windows-bin.zip",
+        notes="Emulador de ColecoVision con soporte para modos de alta resolución.",
+    ),
+    EmulatorInfo(
+        name="FreeDO",
+        systems=("3DO",),
+        url="https://dl.emulator-zone.com/download.php/emulators/3do/freedo/freedo_1_9_wip.rar",
+        notes="Proyecto histórico de emulación 3DO, útil para compatibilidad alternativa.",
+    ),
+    EmulatorInfo(
+        name="Intellivision (jzIntv)",
+        systems=("Intellivision",),
+        url="http://spatula-city.org/~im14u2c/intv/dl/jzintv-20200712-win32-sdl2.zip",
+        notes="jzIntv emula la consola Intellivision con soporte para periféricos y teclados originales.",
+    ),
+    EmulatorInfo(
+        name="MAME 0.280 (64-bit)",
+        systems=("Arcade",),
+        url="https://github.com/mamedev/mame/releases/download/mame0280/mame0280b_64bit.exe",
+        notes="Compilación oficial de MAME 0.280 para Windows de 64 bits.",
+        extras=(
+            {
+                "label": "BIOS y dispositivos (magnet)",
+                "url": "magnet:?xt=urn:btih:8c972ea5085e92d307935159adb5d6bfc063b577&dn=MAME%200.280%20ROMs%20%28bios-devices%29&xl=562713222&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce&tr=udp%3A%2F%2Fexodus.desync.com%3A6969%2Fannounce",
+            },
+        ),
+    ),
+    EmulatorInfo(
+        name="MagicEngine (demo)",
+        systems=("PC Engine", "PC Engine CD"),
+        url="https://dl.emulator-zone.com/download.php/emulators/pcengine/magicengine/me113-demo.zip",
+        notes="Versión demo del emulador comercial MagicEngine para PC Engine y TurboGrafx-CD.",
+    ),
+    EmulatorInfo(
+        name="Neko Project II", 
+        systems=("NEC PC-98",),
+        url="https://dl.emulator-zone.com/download.php/emulators/computer/nekoproject2/np2nt_082.zip",
+        notes="Emulador del ordenador NEC PC-9801 con opciones avanzadas de sonido y vídeo.",
+    ),
+    EmulatorInfo(
+        name="Ootake",
+        systems=("PC Engine", "PC Engine CD"),
+        url="https://dl.emulator-zone.com/download.php/emulators/pcengine/ootake/Ootake304.exe",
+        notes="Emulador gratuito de PC Engine/TurboGrafx-16 con buen soporte para CD-ROM².",
+        extras=(
+            {
+                "label": "Mirror Emu-Land",
+                "url": "https://www.emu-land.net/consoles/pce/emuls/windows?act=dlmfile&id=2275&fid=1",
+            },
+        ),
+    ),
+    EmulatorInfo(
+        name="Project Tempest",
+        systems=("Atari Jaguar",),
+        url="https://dl.emulator-zone.com/download.php/emulators/jaguar/projecttempest/PTv0.95.zip",
+        notes="Emulador clásico de Atari Jaguar orientado al rendimiento en equipos modestos.",
+    ),
+    EmulatorInfo(
+        name="ProSystem",
+        systems=("Atari 7800",),
+        url="https://github.com/gstanton/ProSystem1_3/releases/download/v1.3/ProSystem_1_3.zip",
+        notes="Emulador veterano de Atari 7800 con soporte para ROMs comerciales.",
+    ),
+    EmulatorInfo(
+        name="Stella",
+        systems=("Atari 2600",),
+        url="https://github.com/stella-emu/stella/releases/download/5.1.3/Stella-5.1.3-win32.exe",
+        notes="Emulador multiplataforma de Atari 2600, incluye depurador y perfiles de mandos.",
+    ),
+    EmulatorInfo(
+        name="a7800",
+        systems=("Atari 7800",),
+        url="https://github.com/7800-devtools/a7800/releases/download/v5.2/a7800-win-v5.2.zip",
+        notes="Proyecto open source moderno para Atari 7800 con enfoque en desarrollo homebrew.",
+    ),
+    EmulatorInfo(
+        name="atari800",
+        systems=("Atari 5200", "Atari 8-bit"),
+        url="https://github.com/atari800/atari800/releases/download/ATARI800_5_2_0/atari800-5.2.0-win32-sdl.zip",
+        notes="Emulador para la familia Atari 8 bits y consola Atari 5200.",
+    ),
+    EmulatorInfo(
+        name="blueMSX",
+        systems=("MSX", "MSX2", "ColecoVision"),
+        url="https://dl.emulator-zone.com/download.php/emulators/msx/bluemsx/blueMSXv282full.zip",
+        notes="Emulador completo para MSX/MSX2 con soporte adicional para ColecoVision.",
+    ),
+    EmulatorInfo(
+        name="Tsugaru (FM Towns)",
+        systems=("Fujitsu FM Towns", "Fujitsu Marty"),
+        url="https://github.com/captainys/TOWNSEMU/releases/download/v20250513/windows_binary_latest.zip",
+        notes="Port oficial del emulador Tsugaru para la familia Fujitsu FM Towns y la consola Marty.",
+    ),
 )
 
 
