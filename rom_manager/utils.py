@@ -10,9 +10,7 @@ from __future__ import annotations
 
 import importlib
 import os
-
 import sys
-
 import shutil
 import tarfile
 import zipfile
@@ -39,8 +37,8 @@ def resource_path(relative_path: str) -> str:
     return str((base_path / relative_path).resolve())
 
 
-_PY7ZR_SPEC = importlib.util.find_spec("py7zr")
 _PY7ZR_MODULE: ModuleType | None = None
+_PY7ZR_IMPORT_ERROR: BaseException | None = None
 _PY7ZR_REQUIRED_MSG = (
     "py7zr es necesario para extraer archivos .7z. "
     "Instálalo con `pip install py7zr`."
@@ -100,21 +98,37 @@ def extract_archive(
 
 
 def _py7zr_available() -> bool:
-    return _PY7ZR_SPEC is not None
+    global _PY7ZR_MODULE, _PY7ZR_IMPORT_ERROR
+
+    if _PY7ZR_MODULE is not None:
+        return True
+
+    if _PY7ZR_IMPORT_ERROR is not None:
+        return False
+
+    try:
+        _PY7ZR_MODULE = importlib.import_module("py7zr")
+        return True
+    except ModuleNotFoundError as exc:
+        _PY7ZR_IMPORT_ERROR = exc
+        return False
+    except Exception as exc:  # pragma: no cover - depende del entorno
+        _PY7ZR_IMPORT_ERROR = exc
+        raise RuntimeError(f"No se pudo inicializar py7zr: {exc}") from exc
 
 
 def _load_py7zr() -> ModuleType:
-    global _PY7ZR_MODULE
+    global _PY7ZR_MODULE, _PY7ZR_IMPORT_ERROR
 
     if _PY7ZR_MODULE is not None:
         return _PY7ZR_MODULE
 
-    if _PY7ZR_SPEC is None:
-        raise RuntimeError(_PY7ZR_REQUIRED_MSG)
+    if not _py7zr_available():
+        raise RuntimeError(_PY7ZR_REQUIRED_MSG) from _PY7ZR_IMPORT_ERROR
 
-    module = importlib.import_module("py7zr")
-    _PY7ZR_MODULE = module
-    return module
+    # _py7zr_available garantiza que _PY7ZR_MODULE no es None.
+    assert _PY7ZR_MODULE is not None
+    return _PY7ZR_MODULE
 
 
 def _is_7z_file(path: Path) -> bool:
