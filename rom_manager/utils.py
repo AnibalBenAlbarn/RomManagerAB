@@ -8,6 +8,7 @@ extracción de archivos comprimidos con soporte para progreso.
 
 from __future__ import annotations
 
+import importlib
 import os
 
 import sys
@@ -16,6 +17,7 @@ import shutil
 import tarfile
 import zipfile
 from pathlib import Path
+from types import ModuleType
 from typing import Callable, Optional
 
 
@@ -35,6 +37,14 @@ def resource_path(relative_path: str) -> str:
     else:
         base_path = Path(__file__).resolve().parent.parent
     return str((base_path / relative_path).resolve())
+
+
+_PY7ZR_SPEC = importlib.util.find_spec("py7zr")
+_PY7ZR_MODULE: ModuleType | None = None
+_PY7ZR_REQUIRED_MSG = (
+    "py7zr es necesario para extraer archivos .7z. "
+    "Instálalo con `pip install py7zr`."
+)
 
 
 def extract_archive(
@@ -89,23 +99,41 @@ def extract_archive(
         raise RuntimeError(f'No se pudo descomprimir {path.name}: {exc}') from exc
 
 
-def _is_7z_file(path: Path) -> bool:
-    try:
-        import py7zr  # type: ignore import-not-found
+def _py7zr_available() -> bool:
+    return _PY7ZR_SPEC is not None
 
-        if py7zr.is_7zfile(str(path)):
-            return True
-    except ImportError:
-        if path.suffix.lower() == '.7z':
-            raise RuntimeError('py7zr es necesario para extraer archivos .7z')
-    return path.suffix.lower() == '.7z'
+
+def _load_py7zr() -> ModuleType:
+    global _PY7ZR_MODULE
+
+    if _PY7ZR_MODULE is not None:
+        return _PY7ZR_MODULE
+
+    if _PY7ZR_SPEC is None:
+        raise RuntimeError(_PY7ZR_REQUIRED_MSG)
+
+    module = importlib.import_module("py7zr")
+    _PY7ZR_MODULE = module
+    return module
+
+
+def _is_7z_file(path: Path) -> bool:
+    suffix_is_7z = path.suffix.lower() == '.7z'
+
+    if not _py7zr_available():
+        if suffix_is_7z:
+            raise RuntimeError(_PY7ZR_REQUIRED_MSG)
+        return False
+
+    py7zr = _load_py7zr()
+    try:
+        return bool(py7zr.is_7zfile(str(path)))
+    except Exception:  # pragma: no cover - depende de py7zr y del archivo
+        return suffix_is_7z
 
 
 def _extract_7z(path: Path, dest: Path, emit: Callable[[int, int, str], None]) -> None:
-    try:
-        import py7zr  # type: ignore import-not-found
-    except ImportError as exc:  # pragma: no cover - dependencia opcional
-        raise RuntimeError('py7zr es necesario para extraer archivos .7z') from exc
+    py7zr = _load_py7zr()
 
     with py7zr.SevenZipFile(path, 'r') as archive:
         infos = archive.list()

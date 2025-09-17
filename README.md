@@ -19,7 +19,7 @@ ROM Manager AB is a desktop companion app for curating large ROM collections. Bu
 - **Curated emulator catalog:** Browse a static database of popular emulators, jump to official download links, and grab extras per system.【F:rom_manager/emulators.py†L1-L199】【F:rom_manager/gui/main_window.py†L378-L486】
 
 ### Quick start
-1. **Clone & setup:** `python -m venv .venv && source .venv/bin/activate` (or `Scripts\activate`) then `pip install -r requirements.txt` to pull PyQt6, requests, and optional 7z extraction support.【F:requirements.txt†L1-L3】
+1. **Clone & setup:** `python -m venv .venv && source .venv/bin/activate` (or `Scripts\activate`) then `pip install -r requirements.txt` to pull PyQt6, requests, and py7zr for automatic .7z extraction.【F:requirements.txt†L1-L3】
 2. **Launch:** Run `python -m rom_manager.main` to open the GUI with logging preconfigured and directories created on first launch.【F:rom_manager/main.py†L1-L59】【F:rom_manager/paths.py†L23-L55】
 3. **Point to your database:** Use the *Settings → Database* controls to select the SQLite file that contains your ROM metadata.
 4. **Choose a download folder:** Configure concurrency (1–5), optional auto-extraction, and session persistence from *Settings → Downloads*.【F:rom_manager/gui/main_window.py†L209-L332】
@@ -66,7 +66,7 @@ ROM Manager AB es una aplicación de escritorio para organizar colecciones exten
 - **Catálogo curado de emuladores:** Explora una base estática de emuladores populares, abre enlaces oficiales y descarga extras por sistema.【F:rom_manager/emulators.py†L1-L199】【F:rom_manager/gui/main_window.py†L378-L486】
 
 ### Puesta en marcha
-1. **Clona y prepara el entorno:** `python -m venv .venv && source .venv/bin/activate` (o `Scripts\activate`) y luego `pip install -r requirements.txt` para instalar PyQt6, requests y el soporte opcional para 7z.【F:requirements.txt†L1-L3】
+1. **Clona y prepara el entorno:** `python -m venv .venv && source .venv/bin/activate` (o `Scripts\activate`) y luego `pip install -r requirements.txt` para instalar PyQt6, requests y py7zr para la extracción automática de .7z.【F:requirements.txt†L1-L3】
 2. **Inicia la aplicación:** Ejecuta `python -m rom_manager.main`; la GUI se abre con el logging y las carpetas creadas automáticamente.【F:rom_manager/main.py†L1-L59】【F:rom_manager/paths.py†L23-L55】
 3. **Selecciona tu base de datos:** Desde *Ajustes → Base de datos* elige el archivo SQLite con los metadatos de tus ROMs.
 4. **Configura la carpeta de descargas:** Ajusta concurrencia (1–5), auto-descompresión y sesiones desde *Ajustes → Descargas*.【F:rom_manager/gui/main_window.py†L209-L332】
