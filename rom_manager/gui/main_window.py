@@ -14,7 +14,7 @@ from typing import Optional, List, Dict, Sequence
 from PyQt6.QtCore import Qt, QThreadPool, QTimer, QUrl, QEvent, QObject
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout, QLabel, QLineEdit,
-    QPushButton, QFileDialog, QGroupBox, QComboBox, QSpinBox, QTableView, QTableWidget,
+    QPushButton, QFileDialog, QGroupBox, QFrame, QComboBox, QSpinBox, QTableView, QTableWidget,
     QTableWidgetItem, QHeaderView, QMessageBox, QProgressBar, QCheckBox, QTabWidget,
     QAbstractItemView, QListWidget, QListWidgetItem, QMenu, QStyle, QSystemTrayIcon
 )
@@ -442,6 +442,30 @@ class MainWindow(QMainWindow):
         form.addRow("Notas:", self.lbl_emulator_notes)
         lay.addWidget(details_box)
 
+        feedback_box = QFrame()
+        feedback_box.setObjectName("emulatorFeedbackBox")
+        feedback_layout = QHBoxLayout(feedback_box)
+        feedback_layout.setContentsMargins(12, 8, 12, 8)
+        feedback_layout.setSpacing(10)
+        icon_label = QLabel()
+        icon_label.setObjectName("emulatorFeedbackIcon")
+        icon_label.setVisible(False)
+        feedback_layout.addWidget(icon_label, 0, Qt.AlignmentFlag.AlignTop)
+        message_label = QLabel("")
+        message_label.setObjectName("emulatorFeedbackMessage")
+        message_label.setWordWrap(True)
+        feedback_layout.addWidget(message_label, 1)
+        feedback_box.setVisible(False)
+        lay.addWidget(feedback_box)
+
+        self._emulator_feedback_box = feedback_box
+        self._emulator_feedback_icon = icon_label
+        self._emulator_feedback_label = message_label
+        self._emulator_feedback_timer = QTimer(self)
+        self._emulator_feedback_timer.setSingleShot(True)
+        self._emulator_feedback_timer.timeout.connect(self._hide_emulator_feedback)
+        self._apply_emulator_feedback_style("info")
+
         # Cargar catálogo y poblar combos
         self._emulator_catalog = get_emulator_catalog()
         self.cmb_emulator_system.addItem("Selecciona un sistema…", "")
@@ -545,6 +569,65 @@ class MainWindow(QMainWindow):
             self._reset_extra_list()
         self.lbl_emulator_notes.setText(emulator.notes or "—")
 
+    def _apply_emulator_feedback_style(self, kind: str) -> None:
+        if not hasattr(self, "_emulator_feedback_box"):
+            return
+        palette = {
+            "success": ("#d4edda", "#1e8449"),
+            "info": ("#d6eaf8", "#1b4f72"),
+            "warning": ("#fcf3cf", "#9a7d0a"),
+        }
+        background, border = palette.get(kind, palette["info"])
+        text_color = border
+        self._emulator_feedback_box.setStyleSheet(
+            f"""
+            QFrame#emulatorFeedbackBox {{
+                background-color: {background};
+                border: 1px solid {border};
+                border-radius: 8px;
+            }}
+            QLabel#emulatorFeedbackMessage {{
+                color: {text_color};
+                font-weight: 600;
+            }}
+            QLabel#emulatorFeedbackIcon {{
+                color: {text_color};
+            }}
+            """
+        )
+
+    def _show_emulator_feedback(self, message: str, kind: str = "info", duration_ms: int = 5000) -> None:
+        if not hasattr(self, "_emulator_feedback_box"):
+            return
+        self._apply_emulator_feedback_style(kind)
+        icon_map = {
+            "success": QStyle.StandardPixmap.SP_DialogApplyButton,
+            "info": QStyle.StandardPixmap.SP_MessageBoxInformation,
+            "warning": QStyle.StandardPixmap.SP_MessageBoxWarning,
+        }
+        std_icon = self.style().standardIcon(icon_map.get(kind, icon_map["info"]))
+        if std_icon.isNull():
+            self._emulator_feedback_icon.clear()
+            self._emulator_feedback_icon.setVisible(False)
+        else:
+            self._emulator_feedback_icon.setPixmap(std_icon.pixmap(24, 24))
+            self._emulator_feedback_icon.setVisible(True)
+        self._emulator_feedback_label.setText(message)
+        self._emulator_feedback_box.setVisible(True)
+        if hasattr(self, "_emulator_feedback_timer"):
+            self._emulator_feedback_timer.stop()
+            self._emulator_feedback_timer.start(duration_ms)
+        self.statusBar().showMessage(message, duration_ms)
+
+    def _hide_emulator_feedback(self) -> None:
+        if not hasattr(self, "_emulator_feedback_box"):
+            return
+        self._emulator_feedback_box.setVisible(False)
+        self._emulator_feedback_label.clear()
+        if hasattr(self, "_emulator_feedback_icon"):
+            self._emulator_feedback_icon.clear()
+            self._emulator_feedback_icon.setVisible(False)
+
     def _choose_emulator_dir(self) -> None:
         base = self.le_emulator_dir.text().strip() or os.getcwd()
         path = QFileDialog.getExistingDirectory(self, "Seleccionar carpeta de emuladores", base)
@@ -603,6 +686,11 @@ class MainWindow(QMainWindow):
         self.manager.enqueue(download_item)
         self._bind_item_signals(download_item)
         self.items.append(download_item)
+        system_label = self.cmb_emulator_system.currentText().strip() or str(system_value)
+        self._show_emulator_feedback(
+            f"{emulator.name} se añadió a Descargas para {system_label}.",
+            kind="success",
+        )
 
 
     def _download_selected_extra(self) -> None:
@@ -627,6 +715,9 @@ class MainWindow(QMainWindow):
         emulator_dir = os.path.join(system_dir, safe_filename(emulator.name))
         os.makedirs(emulator_dir, exist_ok=True)
 
+        added_labels: List[str] = []
+        skipped_existing = 0
+
         for list_item in selected_items:
             extra = list_item.data(Qt.ItemDataRole.UserRole) or {}
             if not isinstance(extra, dict):
@@ -642,6 +733,7 @@ class MainWindow(QMainWindow):
 
             if any(x.url == url and x.dest_dir == final_dir for x in self.items):
                 logging.debug("Extra already enqueued: %s -> %s", url, final_dir)
+                skipped_existing += 1
                 continue
 
             name = self._build_download_name(url)
@@ -670,6 +762,26 @@ class MainWindow(QMainWindow):
             self.manager.enqueue(download_item)
             self._bind_item_signals(download_item)
             self.items.append(download_item)
+            added_labels.append(label)
+
+        added_count = len(added_labels)
+        if added_count:
+            system_label = self.cmb_emulator_system.currentText().strip() or str(system_value)
+            if added_count == 1:
+                message = f"{added_labels[0]} de {emulator.name} se añadió a Descargas ({system_label})."
+            else:
+                message = f"Se añadieron {added_count} archivos extra de {emulator.name} a Descargas ({system_label})."
+            if skipped_existing:
+                plural = "" if skipped_existing == 1 else "s"
+                message += f" {skipped_existing} elemento{plural} ya estaba en la cola."
+            self._show_emulator_feedback(message, kind="success")
+        elif skipped_existing:
+            plural = "o" if skipped_existing == 1 else "os"
+            self._show_emulator_feedback(
+                f"Los archivos seleccionados ya estaban en la cola de descarg{plural}.",
+                kind="info",
+                duration_ms=3500,
+            )
 
     def _handle_emulator_install(self, item: DownloadItem) -> None:
         dest_file = os.path.join(item.dest_dir, safe_filename(item.name))

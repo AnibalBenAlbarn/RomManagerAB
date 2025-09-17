@@ -37,7 +37,11 @@ def resource_path(relative_path: str) -> str:
     return str((base_path / relative_path).resolve())
 
 
-def extract_archive(archive_path: str, dest_dir: str) -> None:
+def extract_archive(
+    archive_path: str,
+    dest_dir: str,
+    progress: Optional[Callable[[int, int, str], None]] = None,
+) -> None:
 
     """Descomprime ``archive_path`` en ``dest_dir``.
 
