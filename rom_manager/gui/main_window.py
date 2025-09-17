@@ -437,6 +437,10 @@ class MainWindow(QMainWindow):
         self.btn_emulator_download_extra.clicked.connect(self._download_selected_extra)
         form.addRow("", self.btn_emulator_download_extra)
 
+        self.lbl_emulator_requirements = QLabel("—")
+        self.lbl_emulator_requirements.setWordWrap(True)
+        form.addRow("Requisitos adicionales:", self.lbl_emulator_requirements)
+
         self.lbl_emulator_notes = QLabel("—")
         self.lbl_emulator_notes.setWordWrap(True)
         form.addRow("Notas:", self.lbl_emulator_notes)
@@ -492,7 +496,12 @@ class MainWindow(QMainWindow):
         self.cmb_emulator.blockSignals(True)
         self.cmb_emulator.clear()
         for emu in emulators:
-            self.cmb_emulator.addItem(emu.name, emu)
+            display_name = self._emulator_display_name(emu)
+            self.cmb_emulator.addItem(display_name, emu)
+            index = self.cmb_emulator.count() - 1
+            tooltip = self._emulator_tooltip(emu)
+            if tooltip:
+                self.cmb_emulator.setItemData(index, tooltip, Qt.ItemDataRole.ToolTipRole)
         self.cmb_emulator.blockSignals(False)
         has_data = bool(emulators)
         self.cmb_emulator.setEnabled(has_data)
@@ -502,6 +511,33 @@ class MainWindow(QMainWindow):
             self._update_emulator_details(emulators[0])
         else:
             self._update_emulator_details(None)
+
+    def _emulator_display_name(self, emulator: EmulatorInfo) -> str:
+        if emulator.requires_bios:
+            return f"{emulator.name} ⚠"
+        if emulator.extras:
+            return f"{emulator.name} ★"
+        return emulator.name
+
+    def _emulator_tooltip(self, emulator: EmulatorInfo) -> str:
+        if emulator.requires_bios:
+            return "Requiere BIOS o archivos adicionales para funcionar correctamente."
+        if emulator.extras:
+            return "Incluye descargas adicionales opcionales."
+        return ""
+
+    def _update_emulator_requirements_label(self, emulator: Optional[EmulatorInfo]) -> None:
+        if not hasattr(self, "lbl_emulator_requirements"):
+            return
+        if not emulator:
+            self.lbl_emulator_requirements.setText("—")
+            return
+        if emulator.requires_bios:
+            self.lbl_emulator_requirements.setText("⚠ Requiere BIOS o archivos adicionales para funcionar.")
+        elif emulator.extras:
+            self.lbl_emulator_requirements.setText("★ Archivos extra opcionales disponibles.")
+        else:
+            self.lbl_emulator_requirements.setText("—")
 
     def _reset_extra_list(self, message: str = "No hay archivos extra disponibles") -> None:
         if not hasattr(self, "list_emulator_extras"):
@@ -553,6 +589,8 @@ class MainWindow(QMainWindow):
             self.lbl_emulator_systems.setText("—")
             self.le_emulator_url.setText("")
             self._reset_extra_list("Selecciona un emulador para ver archivos extra")
+            if hasattr(self, "lbl_emulator_requirements"):
+                self.lbl_emulator_requirements.setText("—")
             self.lbl_emulator_notes.setText("—")
             self.btn_emulator_download.setEnabled(False)
             self.btn_emulator_open_url.setEnabled(False)
@@ -567,6 +605,7 @@ class MainWindow(QMainWindow):
             self._populate_extra_list(emulator.extras)
         else:
             self._reset_extra_list()
+        self._update_emulator_requirements_label(emulator)
         self.lbl_emulator_notes.setText(emulator.notes or "—")
 
     def _apply_emulator_feedback_style(self, kind: str) -> None:
