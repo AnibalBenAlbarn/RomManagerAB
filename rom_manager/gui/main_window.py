@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import re
+import unicodedata
 from pathlib import Path
 from urllib.parse import urlsplit, unquote
 import json
@@ -1298,8 +1300,20 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _normalize_rom_name(name: str) -> str:
-        """Normaliza el nombre de una ROM para comparaciones sin distinción de mayúsculas."""
-        return " ".join(name.lower().split())
+        """Normaliza el nombre de una ROM para comparaciones tolerantes a variaciones."""
+        text = name.lower()
+        # Eliminar acentos para evitar diferencias entre variantes locales
+        normalized = unicodedata.normalize("NFKD", text)
+        text = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+        # Eliminar cualquier anotación entre paréntesis o corchetes (regiones, idiomas, etc.)
+        text = re.sub(r"\([^)]*\)", " ", text)
+        text = re.sub(r"\[[^\]]*\]", " ", text)
+        # Reemplazar separadores comunes por espacios para unificar criterios
+        text = text.replace("-", " ")
+        text = text.replace("_", " ")
+        # Eliminar el resto de signos de puntuación conservando letras y números
+        text = re.sub(r"[^0-9a-z]+", " ", text)
+        return " ".join(text.split())
 
     @staticmethod
     def _format_name_list(names: Sequence[str], limit: int = 12) -> str:
