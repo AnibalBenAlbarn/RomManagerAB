@@ -83,6 +83,22 @@ class Database:
         )
         return ["Todos"] + [r[0] for r in cur.fetchall()]
 
+    def get_rom_names_by_system(self, system_id: int) -> List[sqlite3.Row]:
+        """
+        Obtiene todos los nombres de ROM disponibles para un sistema concreto.
+
+        Se devuelve una lista de filas con ``rom_id`` y ``rom_name`` para
+        facilitar la construcción de búsquedas exactas por nombre en la
+        interfaz de usuario.
+        """
+        assert self.conn
+        sql = (
+            "SELECT roms.id AS rom_id, roms.name AS rom_name "
+            "FROM roms WHERE roms.system_id = ? ORDER BY roms.name"
+        )
+        cur = self.conn.execute(sql, (system_id,))
+        return cur.fetchall()
+
     def search_links(
         self,
         text: str = "",
