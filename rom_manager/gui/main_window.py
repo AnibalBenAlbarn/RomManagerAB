@@ -39,6 +39,58 @@ class MainWindow(QMainWindow):
     gestiona la interacción del usuario con la base de datos, el
     gestor de descargas y la visualización de resultados.
     """
+
+    _KNOWN_ROM_EXTENSIONS = {
+        ".7z",
+        ".zip",
+        ".rar",
+        ".tar",
+        ".gz",
+        ".bz2",
+        ".xz",
+        ".zst",
+        ".iso",
+        ".cso",
+        ".wbfs",
+        ".wdf",
+        ".wad",
+        ".cia",
+        ".nds",
+        ".3ds",
+        ".xci",
+        ".nsp",
+        ".gba",
+        ".gbc",
+        ".gb",
+        ".nes",
+        ".sfc",
+        ".smc",
+        ".z64",
+        ".n64",
+        ".v64",
+        ".chd",
+        ".bin",
+        ".cue",
+        ".img",
+        ".mdf",
+        ".mds",
+        ".ccd",
+        ".sub",
+        ".dmg",
+        ".pkg",
+        ".apk",
+        ".pbp",
+        ".vpk",
+        ".elf",
+        ".dol",
+        ".xiso",
+        ".adf",
+        ".int",
+        ".smd",
+        ".001",
+        ".002",
+        ".003",
+    }
     def __init__(self):
         super().__init__()
         icon_path = resource_path("resources/romMan.ico")
@@ -339,12 +391,14 @@ class MainWindow(QMainWindow):
         self.le_search.returnPressed.connect(self._run_search)
         self.cmb_system = QComboBox(); self.cmb_lang = QComboBox(); self.cmb_region = QComboBox(); self.cmb_fmt = QComboBox()
         self.btn_search = QPushButton("Buscar"); self.btn_search.clicked.connect(self._run_search)
+        self.btn_import_list = QPushButton("Importar lista…"); self.btn_import_list.clicked.connect(self._import_rom_list)
         f.addWidget(QLabel("Texto:"),0,0); f.addWidget(self.le_search,0,1)
         f.addWidget(QLabel("Sistema:"),1,0); f.addWidget(self.cmb_system,1,1)
         f.addWidget(QLabel("Idioma:"),2,0); f.addWidget(self.cmb_lang,2,1)
         f.addWidget(QLabel("Región:"),3,0); f.addWidget(self.cmb_region,3,1)
         f.addWidget(QLabel("Formato:"),4,0); f.addWidget(self.cmb_fmt,4,1)
         f.addWidget(self.btn_search,0,2,5,1)
+        f.addWidget(self.btn_import_list,5,0,1,3)
         lay.addWidget(filters)
 
         # Tabla de resultados agrupados: columnas ROM, Sistema, Servidor, Formato, Idiomas, Acciones
@@ -1067,6 +1121,203 @@ class MainWindow(QMainWindow):
         self.search_groups = groups
         # Mostrar resultados agrupados
         self._display_grouped_results()
+
+    def _import_rom_list(self) -> None:
+        """Importa una lista de ROM desde un archivo de texto y las añade a la cesta."""
+        if not self.db:
+            QMessageBox.warning(self, "Importar lista", "Conecta la base de datos primero.")
+            return
+        sys_id = self.cmb_system.currentData()
+        if sys_id is None:
+            QMessageBox.warning(
+                self,
+                "Importar lista",
+                "Selecciona un sistema específico en el filtro antes de importar una lista.",
+            )
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Selecciona el archivo de lista",
+            "",
+            "Archivos de texto (*.txt);;Todos los archivos (*)",
+        )
+        if not path:
+            return
+        try:
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    lines = fh.readlines()
+            except UnicodeDecodeError:
+                with open(path, "r", encoding="latin-1") as fh:
+                    lines = fh.readlines()
+        except Exception as exc:
+            logging.exception("Error reading ROM list file %s: %s", path, exc)
+            QMessageBox.critical(self, "Importar lista", f"No se pudo leer el archivo: {exc}")
+            return
+        raw_names = self._extract_rom_names_from_lines(lines)
+        if not raw_names:
+            QMessageBox.information(
+                self,
+                "Importar lista",
+                "El archivo no contiene nombres de ROM válidos.",
+            )
+            return
+        unique_names: List[tuple[str, str]] = []
+        seen_norms: set[str] = set()
+        for name in raw_names:
+            norm = self._normalize_rom_name(name)
+            if not norm or norm in seen_norms:
+                continue
+            seen_norms.add(norm)
+            unique_names.append((name, norm))
+        if not unique_names:
+            QMessageBox.information(
+                self,
+                "Importar lista",
+                "El archivo no contiene nombres de ROM válidos tras eliminar duplicados.",
+            )
+            return
+        try:
+            rom_rows = self.db.get_rom_names_by_system(int(sys_id))
+        except Exception as exc:
+            logging.exception("Error loading ROM catalog for system %s: %s", sys_id, exc)
+            QMessageBox.critical(self, "Importar lista", str(exc))
+            return
+        rom_lookup: Dict[str, List[sqlite3.Row]] = {}
+        for row in rom_rows:
+            norm = self._normalize_rom_name(row["rom_name"])
+            if not norm:
+                continue
+            rom_lookup.setdefault(norm, []).append(row)
+        added: List[str] = []
+        already: List[str] = []
+        missing: List[str] = []
+        ambiguous: List[str] = []
+        for original, norm in unique_names:
+            candidates = rom_lookup.get(norm)
+            if not candidates:
+                missing.append(original)
+                continue
+            if len(candidates) > 1:
+                ambiguous.append(original)
+                continue
+            rom_row = candidates[0]
+            rom_id = int(rom_row["rom_id"])
+            rom_name = rom_row["rom_name"]
+            if rom_id in self.basket_items:
+                already.append(rom_name)
+                continue
+            try:
+                links = self.db.get_links_by_rom(rom_id)
+            except Exception as exc:
+                logging.exception("Error retrieving links for ROM %s: %s", rom_name, exc)
+                missing.append(original)
+                continue
+            if not links:
+                missing.append(original)
+                continue
+            group = self.search_groups.get(rom_id)
+            if group is None:
+                group = self._create_group_from_links(rom_name, links)
+            if not group:
+                missing.append(original)
+                continue
+            if self._add_links_to_basket(rom_id, rom_name, links, group):
+                added.append(rom_name)
+            else:
+                already.append(rom_name)
+        if added:
+            self._refresh_basket_table()
+        summary_parts: List[str] = []
+        if added:
+            summary_parts.append(
+                f"Se añadieron {len(added)} ROM(s) a la cesta:\n" + self._format_name_list(added)
+            )
+        if already:
+            summary_parts.append(
+                "Ya estaban en la cesta:\n" + self._format_name_list(already)
+            )
+        if ambiguous:
+            summary_parts.append(
+                "Se omitieron por múltiples coincidencias:\n" + self._format_name_list(ambiguous)
+            )
+        if missing:
+            summary_parts.append(
+                "No se encontraron coincidencias en la base de datos:\n" + self._format_name_list(missing)
+            )
+        if not summary_parts:
+            summary_parts.append("No se añadió ninguna ROM desde el archivo seleccionado.")
+        QMessageBox.information(self, "Importar lista", "\n\n".join(summary_parts))
+
+    @classmethod
+    def _extract_rom_names_from_lines(cls, lines: Sequence[str]) -> List[str]:
+        """Extrae nombres de ROM a partir de las líneas de un fichero de texto."""
+        names: List[str] = []
+        for raw_line in lines:
+            text = raw_line.strip()
+            if not text:
+                continue
+            lower = text.lower()
+            if lower.startswith("lista de archivos"):
+                continue
+            if all(ch in "=-_" for ch in text):
+                continue
+            candidate = text.strip().strip('"')
+            if candidate.startswith("- "):
+                candidate = candidate[2:]
+            if candidate.startswith("• "):
+                candidate = candidate[2:]
+            candidate = candidate.replace("\\", "/").rstrip("/")
+            try:
+                candidate = Path(candidate).name or candidate
+            except Exception:
+                candidate = candidate.split("/")[-1]
+            candidate = candidate.strip()
+            if not candidate:
+                continue
+            cleaned = cls._remove_known_extensions(candidate)
+            if not cleaned:
+                continue
+            names.append(cleaned)
+        return names
+
+    @classmethod
+    def _remove_known_extensions(cls, filename: str) -> str:
+        """Elimina extensiones conocidas de nombres de archivo de ROM."""
+        name = filename.strip()
+        while True:
+            base, ext = os.path.splitext(name)
+            if not ext:
+                break
+            ext_lower = ext.lower()
+            if ext_lower in cls._KNOWN_ROM_EXTENSIONS:
+                name = base
+                continue
+            break
+        return name.strip().rstrip('.')
+
+    @staticmethod
+    def _normalize_rom_name(name: str) -> str:
+        """Normaliza el nombre de una ROM para comparaciones sin distinción de mayúsculas."""
+        return " ".join(name.lower().split())
+
+    @staticmethod
+    def _format_name_list(names: Sequence[str], limit: int = 12) -> str:
+        """Formatea una lista de nombres para mostrarlos en un cuadro de diálogo."""
+        if not names:
+            return ""
+        unique: List[str] = []
+        seen: set[str] = set()
+        for name in names:
+            if name in seen:
+                continue
+            seen.add(name)
+            unique.append(name)
+        display = [f" • {value}" for value in unique[:limit]]
+        extra = len(unique) - limit
+        if extra > 0:
+            display.append(f" • … y {extra} más")
+        return "\n".join(display)
 
     def _build_download_name(self, url: str) -> str:
         """Devuelve el nombre de archivo original decodificando la URL."""
@@ -2617,6 +2868,84 @@ class MainWindow(QMainWindow):
             logging.debug("Removed ROM %s from basket", removed['name'])
             self._refresh_basket_table()
 
+    def _create_group_from_links(self, rom_name: str, links: Sequence[sqlite3.Row]) -> Optional[dict]:
+        """Construye la estructura de agrupación para una ROM a partir de sus enlaces."""
+        rows_list = list(links)
+        if not rows_list:
+            return None
+        servers = sorted(set((row["server"] or "") for row in rows_list))
+        formats_by_server: dict[str, List[str]] = {}
+        for srv in servers:
+            fmts = sorted(
+                set((row["fmt"] or "") for row in rows_list if (row["server"] or "") == srv)
+            )
+            formats_by_server[srv] = fmts
+        langs_by_server_format: dict[tuple[str, str], List[str]] = {}
+        for rlink in rows_list:
+            srv = rlink["server"] or ""
+            fmt_val = rlink["fmt"] or ""
+            key = (srv, fmt_val)
+            lang_str = rlink["langs"] or ""
+            lang_str = ','.join([x.strip() for x in lang_str.split(',') if x.strip()]) or ""
+            lst = langs_by_server_format.setdefault(key, [])
+            if lang_str not in lst:
+                lst.append(lang_str)
+        for key, lst in langs_by_server_format.items():
+            lst.sort()
+            langs_by_server_format[key] = lst
+        link_lookup: dict[tuple[str, str, str], sqlite3.Row] = {}
+        for rlink in rows_list:
+            srv = rlink["server"] or ""
+            fmt_val = rlink["fmt"] or ""
+            lang_str = rlink["langs"] or ""
+            lang_str = ','.join([x.strip() for x in lang_str.split(',') if x.strip()]) or ""
+            link_lookup[(srv, fmt_val, lang_str)] = rlink
+        group = {
+            "name": rom_name,
+            "rows": rows_list,
+            "servers": servers,
+            "formats_by_server": formats_by_server,
+            "langs_by_server_format": langs_by_server_format,
+            "link_lookup": link_lookup,
+            "selected_server": self._default_server_index(servers),
+            "selected_format": 0,
+            "selected_lang": 0,
+            "system_name": rows_list[0].get('system_name', ''),
+        }
+        return group
+
+    def _add_links_to_basket(
+        self,
+        rom_id: int,
+        rom_name: str,
+        links: Sequence[sqlite3.Row],
+        group: Optional[dict] = None,
+    ) -> bool:
+        """Inserta una ROM y sus enlaces en la cesta si no estaba presente."""
+        if rom_id in self.basket_items:
+            return False
+        if group is None:
+            group = self._create_group_from_links(rom_name, links)
+        if not group:
+            return False
+        if group.get("selected_server") is None:
+            servers = group.get("servers", [])
+            group["selected_server"] = self._default_server_index(servers)
+        group.setdefault("selected_format", 0)
+        group.setdefault("selected_lang", 0)
+        sel_srv = group.get("selected_server", 0)
+        sel_fmt = group.get("selected_format", 0)
+        sel_lang = group.get("selected_lang", 0)
+        self.basket_items[rom_id] = {
+            'name': rom_name,
+            'links': list(links),
+            'group': group,
+            'selected_server': sel_srv,
+            'selected_format': sel_fmt,
+            'selected_lang': sel_lang,
+        }
+        return True
+
     def _add_selected_to_basket(self) -> None:
         """
         Agrupa las ROM seleccionadas en la tabla de resultados en la cesta.
@@ -2658,60 +2987,10 @@ class MainWindow(QMainWindow):
             # Copiar la estructura de grupo si existe para mantener servidores, formatos e idiomas
             group = self.search_groups.get(rom_id)
             if group is None:
-                # Construir una estructura de agrupación mínima a partir de las filas
-                rows_list = links
-                # Servidores únicos
-                servers = sorted(set((row["server"] or "") for row in rows_list))
-                # Diccionario: servidor -> lista de formatos únicos
-                formats_by_server: dict[str, List[str]] = {}
-                for srv in servers:
-                    fmts = sorted(set((row["fmt"] or "") for row in rows_list if (row["server"] or "") == srv))
-                    formats_by_server[srv] = fmts
-                # Diccionario: (servidor, formato) -> lista de idiomas únicos (cadenas completas)
-                langs_by_server_format: dict[tuple[str, str], List[str]] = {}
-                for rlink in rows_list:
-                    srv = rlink["server"] or ""
-                    fmt_val = rlink["fmt"] or ""
-                    key = (srv, fmt_val)
-                    lang_str = rlink["langs"] or ""
-                    lang_str = ','.join([x.strip() for x in lang_str.split(',') if x.strip()]) or ""
-                    lst = langs_by_server_format.setdefault(key, [])
-                    if lang_str not in lst:
-                        lst.append(lang_str)
-                # Ordenar idiomas y mantener cadena vacía al final
-                for key in langs_by_server_format:
-                    lst = langs_by_server_format[key]
-                    lst.sort()
-                    langs_by_server_format[key] = lst
-                # Diccionario de búsqueda: (servidor, formato, idiomas) -> fila
-                link_lookup: dict[tuple[str, str, str], sqlite3.Row] = {}
-                for rlink in rows_list:
-                    srv = rlink["server"] or ""
-                    fmt_val = rlink["fmt"] or ""
-                    lang_str = rlink["langs"] or ""
-                    lang_str = ','.join([x.strip() for x in lang_str.split(',') if x.strip()]) or ""
-                    link_lookup[(srv, fmt_val, lang_str)] = rlink
-                group = {
-                    "name": rom_name,
-                    "rows": rows_list,
-                    "servers": servers,
-                    "formats_by_server": formats_by_server,
-                    "langs_by_server_format": langs_by_server_format,
-                    "link_lookup": link_lookup,
-                    "selected_server": self._default_server_index(servers),
-                    "selected_format": 0,
-                    "selected_lang": 0,
-                    "system_name": links[0].get('system_name', ''),
-                }
-            sel_srv = group.get('selected_server', 0)
-            self.basket_items[rom_id] = {
-                'name': rom_name,
-                'links': links,
-                'group': group,
-                'selected_server': sel_srv,
-                'selected_format': 0,
-                'selected_lang': 0,
-            }
+                group = self._create_group_from_links(rom_name, links)
+            if not group:
+                continue
+            self._add_links_to_basket(int(rom_id), rom_name, links, group)
         # Actualizar la tabla de la cesta después de añadir los elementos
         self._refresh_basket_table()
 
