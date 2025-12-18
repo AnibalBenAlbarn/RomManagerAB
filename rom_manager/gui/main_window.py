@@ -18,9 +18,10 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout, QLabel, QLineEdit,
     QPushButton, QFileDialog, QGroupBox, QFrame, QComboBox, QSpinBox, QTableView, QTableWidget,
     QTableWidgetItem, QHeaderView, QMessageBox, QProgressBar, QCheckBox, QTabWidget,
-    QAbstractItemView, QListWidget, QListWidgetItem, QMenu, QStyle, QSystemTrayIcon
+    QAbstractItemView, QListWidget, QListWidgetItem, QMenu, QStyle, QSystemTrayIcon,
+    QAbstractButton
 )
-from PyQt6.QtGui import QDesktopServices, QIcon
+from PyQt6.QtGui import QDesktopServices, QIcon, QKeyEvent
 
 from ..database import Database
 from ..models import LinksTableModel
@@ -111,6 +112,8 @@ class MainWindow(QMainWindow):
         self.no_confirm_cancel: bool = False
         # Flag para ocultar la advertencia de servidores al iniciar
         self.hide_server_warning: bool = False
+        # Flag para iniciar en modo consola (pantalla completa + mando)
+        self.console_mode_enabled: bool = False
 
         # Estado
         self.model = LinksTableModel([])
@@ -137,7 +140,7 @@ class MainWindow(QMainWindow):
         self.search_groups: dict[int, List[sqlite3.Row]] = {}
 
         # Tabs: mostrar primero el selector, luego emuladores, descargas y finalmente ajustes
-        tabs = QTabWidget(); self.setCentralWidget(tabs)
+        tabs = QTabWidget(); self.setCentralWidget(tabs); self.tabs = tabs
         # Crear contenedores para cada pestaña
         self.tab_selector = QWidget()
         self.tab_emulators = QWidget()
@@ -257,8 +260,12 @@ class MainWindow(QMainWindow):
         if self.tray_icon and self.tray_icon.isVisible():
             self.tray_icon.hide()
         self.background_downloads = False
-        self.showNormal()
-        self.show()
+        if self.console_mode_enabled:
+            self.showFullScreen()
+        else:
+            self.showNormal()
+            if not self.isVisible():
+                self.show()
         self.activateWindow()
         try:
             self.raise_()
@@ -274,6 +281,116 @@ class MainWindow(QMainWindow):
         """Cierra la aplicación desde el icono de la bandeja."""
         self.background_downloads = False
         self.close()
+
+    # --- Modo consola / pantalla completa ---
+    def _apply_console_mode(self, enabled: bool, *, save: bool = False, initial: bool = False) -> None:
+        """
+        Activa o desactiva el modo consola (pantalla completa + atajos de mando)
+        y persiste el estado si se solicita.
+        """
+        self.console_mode_enabled = bool(enabled)
+        if hasattr(self, "chk_console_mode"):
+            self.chk_console_mode.blockSignals(True)
+            self.chk_console_mode.setChecked(self.console_mode_enabled)
+            self.chk_console_mode.blockSignals(False)
+
+        if self.console_mode_enabled:
+            if initial and not self.isVisible():
+                self.setWindowState(self.windowState() | Qt.WindowState.WindowFullScreen)
+            else:
+                self.showFullScreen()
+        else:
+            if self.isFullScreen():
+                if initial and not self.isVisible():
+                    self.setWindowState(self.windowState() & ~Qt.WindowState.WindowFullScreen)
+                else:
+                    self.showNormal()
+
+        if save:
+            self._save_config()
+
+    def _activate_focused_control(self) -> bool:
+        """Simula un clic/activación sobre el widget enfocado."""
+        widget = self.focusWidget()
+        if isinstance(widget, QAbstractButton):
+            widget.click()
+            return True
+        if isinstance(widget, QComboBox):
+            widget.showPopup()
+            return True
+        return False
+
+    def _switch_tab_with_delta(self, delta: int) -> bool:
+        """Navega entre pestañas desplazando el índice actual."""
+        if not hasattr(self, "tabs"):
+            return False
+        try:
+            current = self.tabs.currentIndex()
+            total = self.tabs.count()
+            if total <= 0:
+                return False
+            new_index = (current + delta) % total
+            if new_index != current:
+                self.tabs.setCurrentIndex(new_index)
+                return True
+        except Exception:
+            logging.exception("Failed to switch tab with delta %s", delta)
+        return False
+
+    def _handle_console_back_action(self) -> bool:
+        """Acción de retroceso para mandos (tab anterior o abandonar pantalla completa)."""
+        if self._switch_tab_with_delta(-1):
+            return True
+        if self.console_mode_enabled and self.isFullScreen():
+            self._apply_console_mode(False, save=True)
+            return True
+        return False
+
+    def _handle_gamepad_navigation(self, key: int) -> bool:
+        """
+        Gestiona movimientos básicos cuando el modo consola está activo y el
+        usuario usa teclas de gamepad compatibles con Qt.
+        """
+        if not self.console_mode_enabled:
+            return False
+
+        focus_widget = self.focusWidget()
+        is_text_input = isinstance(focus_widget, (QLineEdit, QComboBox))
+
+        if key == Qt.Key.Key_PageUp:
+            return self._switch_tab_with_delta(-1)
+        if key == Qt.Key.Key_PageDown:
+            return self._switch_tab_with_delta(1)
+        if key == Qt.Key.Key_Guide:
+            self._apply_console_mode(not self.console_mode_enabled, save=True)
+            return True
+        if key in (Qt.Key.Key_Back, Qt.Key.Key_Backspace):
+            return self._handle_console_back_action()
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Select, Qt.Key.Key_Space):
+            return self._activate_focused_control()
+        if not is_text_input and key in (Qt.Key.Key_Up, Qt.Key.Key_Left):
+            return self.focusNextPrevChild(False)
+        if not is_text_input and key in (Qt.Key.Key_Down, Qt.Key.Key_Right):
+            return self.focusNextPrevChild(True)
+        return False
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # type: ignore[override]
+        """Soporte de teclado/mando para el modo consola."""
+        try:
+            if event.key() == Qt.Key.Key_F11:
+                self._apply_console_mode(not self.console_mode_enabled, save=True)
+                return
+            if event.key() == Qt.Key.Key_Guide:
+                self._apply_console_mode(not self.console_mode_enabled, save=True)
+                return
+            if self.console_mode_enabled and event.key() == Qt.Key.Key_Escape:
+                self._apply_console_mode(False, save=True)
+                return
+            if self._handle_gamepad_navigation(event.key()):
+                return
+        except Exception:
+            logging.exception("Error handling console key event")
+        super().keyPressEvent(event)
 
     # --- Base de datos ---
     def _build_db_tab(self) -> None:
@@ -374,6 +491,21 @@ class MainWindow(QMainWindow):
         hbox_sess.addWidget(self.btn_save_session)
         hbox_sess.addWidget(self.btn_load_session)
         lay.addWidget(gb_session)
+
+        # Grupo de modo consola (pantalla completa + mando)
+        gb_console = QGroupBox("Interfaz tipo consola")
+        console_layout = QVBoxLayout(gb_console)
+        self.chk_console_mode = QCheckBox("Iniciar en modo consola (pantalla completa y mando)")
+        self.chk_console_mode.toggled.connect(lambda checked: self._apply_console_mode(checked, save=True))
+        console_layout.addWidget(self.chk_console_mode)
+        lbl_console_hint = QLabel(
+            "Al activar este modo, la aplicación arranca en pantalla completa y habilita atajos básicos "
+            "para mando/teclado: F11 o Guía alternan pantalla completa, Retroceso/Escape retroceden y "
+            "RePág/AvPág cambian entre pestañas. Cursores sirven para moverse por los controles."
+        )
+        lbl_console_hint.setWordWrap(True)
+        console_layout.addWidget(lbl_console_hint)
+        lay.addWidget(gb_console)
 
     # --- Selector ROMs ---
     def _build_selector_tab(self) -> None:
@@ -2325,6 +2457,7 @@ class MainWindow(QMainWindow):
                 'no_confirm_cancel': self.no_confirm_cancel,
                 'hide_server_warning': self.hide_server_warning,
                 'session_file': self.session_file,
+                'console_mode_enabled': self.console_mode_enabled,
             }
 
             path = self._config_file_path()
@@ -2352,6 +2485,7 @@ class MainWindow(QMainWindow):
             chk_sys = bool(data.get('chk_create_sys_dirs', False))
             emulator_dir = str(data.get('emulator_dir', '') or '')
             emulator_delete = bool(data.get('emulator_delete_archive', False))
+            console_mode = bool(data.get('console_mode_enabled', False))
 
             self.le_db.setText(db_path)
             self.le_dir.setText(download_dir)
@@ -2362,6 +2496,11 @@ class MainWindow(QMainWindow):
             self.chk_create_sys_dirs.setChecked(chk_sys)
             self.le_emulator_dir.setText(emulator_dir)
             self.chk_emulator_delete.setChecked(emulator_delete)
+            self.console_mode_enabled = console_mode
+            if hasattr(self, "chk_console_mode"):
+                self.chk_console_mode.blockSignals(True)
+                self.chk_console_mode.setChecked(console_mode)
+                self.chk_console_mode.blockSignals(False)
 
             session_file = data.get('session_file')
             if isinstance(session_file, str) and session_file.strip():
@@ -2379,6 +2518,8 @@ class MainWindow(QMainWindow):
 
             self.no_confirm_cancel = bool(data.get('no_confirm_cancel', False))
             self.hide_server_warning = bool(data.get('hide_server_warning', False))
+            # Aplicar modo consola en la ventana inicial
+            self._apply_console_mode(self.console_mode_enabled, save=False, initial=True)
         except Exception:
             logging.exception('Failed to load configuration', exc_info=True)
             self._saved_basket_json = ''

@@ -72,7 +72,10 @@ def main() -> None:
         if not icon.isNull():
             app.setWindowIcon(icon)
     win = MainWindow()
-    win.show()
+    if getattr(win, "console_mode_enabled", False):
+        win.showFullScreen()
+    else:
+        win.show()
     sys.exit(app.exec())
 
 
