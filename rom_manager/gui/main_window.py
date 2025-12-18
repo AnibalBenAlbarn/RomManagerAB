@@ -13,6 +13,14 @@ import sqlite3
 import math
 from typing import Optional, List, Dict, Sequence
 
+if __package__ is None or __package__ == "":
+    import sys
+
+    project_root = Path(__file__).resolve().parents[2]
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+    __package__ = "rom_manager.gui"
+
 from PyQt6.QtCore import Qt, QThreadPool, QTimer, QUrl, QEvent, QObject
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout, QLabel, QLineEdit,
@@ -23,13 +31,13 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QDesktopServices, QIcon, QKeyEvent
 
-from ..database import Database
-from ..models import LinksTableModel
-from ..download import DownloadManager, DownloadItem, ExtractionTask
-from ..emulators import EmulatorInfo, get_all_systems, get_emulator_catalog, get_emulators_for_system
-from ..paths import config_path, session_path
+from rom_manager.database import Database
+from rom_manager.models import LinksTableModel
+from rom_manager.download import DownloadManager, DownloadItem, ExtractionTask
+from rom_manager.emulators import EmulatorInfo, get_all_systems, get_emulator_catalog, get_emulators_for_system
+from rom_manager.paths import config_path, session_path
 
-from ..utils import safe_filename, extract_archive, resource_path
+from rom_manager.utils import safe_filename, extract_archive, resource_path
 
 
 # -----------------------------
