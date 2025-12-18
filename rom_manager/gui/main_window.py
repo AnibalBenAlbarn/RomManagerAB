@@ -27,9 +27,9 @@ from PyQt6.QtWidgets import (
     QPushButton, QFileDialog, QGroupBox, QFrame, QComboBox, QSpinBox, QTableView, QTableWidget,
     QTableWidgetItem, QHeaderView, QMessageBox, QProgressBar, QCheckBox, QTabWidget,
     QAbstractItemView, QListWidget, QListWidgetItem, QMenu, QStyle, QSystemTrayIcon,
-    QAbstractButton
+    QAbstractButton, QToolButton
 )
-from PyQt6.QtGui import QDesktopServices, QIcon, QKeyEvent
+from PyQt6.QtGui import QDesktopServices, QIcon, QKeyEvent, QGuiApplication
 
 from rom_manager.database import Database
 from rom_manager.models import LinksTableModel
@@ -160,6 +160,12 @@ class MainWindow(QMainWindow):
         tabs.addTab(self.tab_downloads, "Descargas")
         tabs.addTab(self.tab_settings, "Ajustes")
 
+        self._create_fullscreen_exit_button()
+        self._apply_console_stylesheet()
+        app = QApplication.instance()
+        if app:
+            app.installEventFilter(self)
+
         # Construir las pestañas
         self._build_selector_tab()
         self._build_emulators_tab()
@@ -279,6 +285,7 @@ class MainWindow(QMainWindow):
             self.raise_()
         except Exception:
             pass
+        self._update_fullscreen_exit_button()
 
     def _on_tray_icon_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         """Responde a la interacción del usuario con el icono de la bandeja."""
@@ -291,6 +298,64 @@ class MainWindow(QMainWindow):
         self.close()
 
     # --- Modo consola / pantalla completa ---
+    def _apply_console_stylesheet(self) -> None:
+        """Aplica un tema oscuro con realce eléctrico para facilitar la navegación con mando."""
+        stylesheet = r'''
+            QMainWindow { background-color: #0b1221; color: #e5e7eb; }
+            QWidget { background-color: #0b1221; color: #e5e7eb; }
+            QLabel { color: #e5e7eb; }
+            QGroupBox { border: 1px solid #1f2937; border-radius: 8px; margin-top: 8px; }
+            QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 4px; color: #9ca3af; }
+            QPushButton, QToolButton, QLineEdit, QComboBox, QSpinBox, QCheckBox, QTableWidget, QTabWidget { border-radius: 6px; }
+            QPushButton, QToolButton, QComboBox, QLineEdit, QSpinBox { background-color: #111827; border: 1px solid #1f2937; padding: 6px 10px; color: #e5e7eb; }
+            QPushButton:hover, QToolButton:hover { border-color: #2563eb; }
+            QPushButton:pressed, QToolButton:pressed { background-color: #0f172a; }
+            QPushButton:focus, QToolButton:focus, QComboBox:focus, QLineEdit:focus, QSpinBox:focus, QTabBar::tab:focus {
+                border: 2px solid #00bfff; color: #e0f2fe; box-shadow: 0 0 8px #00bfff;
+            }
+            QTabBar::tab { background: #111827; border: 1px solid #1f2937; padding: 8px 14px; margin-right: 2px; }
+            QTabBar::tab:selected { background: #1f2937; color: #7dd3fc; }
+            QTabBar::tab:hover { color: #60a5fa; }
+            QTableWidget { gridline-color: #1f2937; alternate-background-color: #111827; }
+            QHeaderView::section { background-color: #0f172a; color: #cbd5e1; padding: 6px; border: 0px; }
+            QProgressBar { border: 1px solid #1f2937; border-radius: 6px; text-align: center; color: #e5e7eb; }
+            QProgressBar::chunk { background-color: #22d3ee; }
+        '''
+        self.setStyleSheet(stylesheet)
+
+    def _create_fullscreen_exit_button(self) -> None:
+        """Crea un botón visible en modo pantalla completa para salir rápidamente."""
+        self._exit_fullscreen_button = QToolButton(self)
+        self._exit_fullscreen_button.setText("Salir")
+        self._exit_fullscreen_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        try:
+            self._exit_fullscreen_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarCloseButton))
+        except Exception:
+            pass
+        self._exit_fullscreen_button.clicked.connect(self.close)
+        self._exit_fullscreen_button.setStyleSheet(
+            "QToolButton { background: #111827; border: 1px solid #2563eb; padding: 6px 12px;"
+            " border-radius: 10px; color: #e5e7eb; font-weight: 600; }"
+            "QToolButton:hover { background: #0f172a; }"
+            "QToolButton:focus { border: 2px solid #00bfff; box-shadow: 0 0 8px #00bfff; }"
+        )
+        if hasattr(self, "tabs"):
+            self.tabs.setCornerWidget(self._exit_fullscreen_button, Qt.Corner.TopRightCorner)
+        self._update_fullscreen_exit_button()
+
+    def _update_fullscreen_exit_button(self) -> None:
+        if hasattr(self, "_exit_fullscreen_button"):
+            self._exit_fullscreen_button.setVisible(self.isFullScreen())
+
+    def _show_virtual_keyboard(self) -> None:
+        """Solicita mostrar el teclado virtual cuando el modo consola está activo."""
+        try:
+            input_method = QGuiApplication.inputMethod()
+            if input_method:
+                input_method.show()
+        except Exception:
+            logging.exception("No se pudo mostrar el teclado virtual")
+
     def _apply_console_mode(self, enabled: bool, *, save: bool = False, initial: bool = False) -> None:
         """
         Activa o desactiva el modo consola (pantalla completa + atajos de mando)
@@ -316,6 +381,7 @@ class MainWindow(QMainWindow):
 
         if save:
             self._save_config()
+        self._update_fullscreen_exit_button()
 
     def _activate_focused_control(self) -> bool:
         """Simula un clic/activación sobre el widget enfocado."""
@@ -369,16 +435,32 @@ class MainWindow(QMainWindow):
             return self._switch_tab_with_delta(-1)
         if key == Qt.Key.Key_PageDown:
             return self._switch_tab_with_delta(1)
+        if key in (Qt.Key.Key_GamepadL1, Qt.Key.Key_GamepadShoulderLeft):
+            return self._switch_tab_with_delta(-1)
+        if key in (Qt.Key.Key_GamepadR1, Qt.Key.Key_GamepadShoulderRight):
+            return self._switch_tab_with_delta(1)
         if key == Qt.Key.Key_Guide:
             self._apply_console_mode(not self.console_mode_enabled, save=True)
             return True
         if key in (Qt.Key.Key_Back, Qt.Key.Key_Backspace):
             return self._handle_console_back_action()
-        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Select, Qt.Key.Key_Space):
+        if key in (
+            Qt.Key.Key_Return,
+            Qt.Key.Key_Enter,
+            Qt.Key.Key_Select,
+            Qt.Key.Key_Space,
+            Qt.Key.Key_GamepadA,
+        ):
             return self._activate_focused_control()
+        if key in (Qt.Key.Key_GamepadB,):
+            return self._handle_console_back_action()
         if not is_text_input and key in (Qt.Key.Key_Up, Qt.Key.Key_Left):
             return self.focusNextPrevChild(False)
         if not is_text_input and key in (Qt.Key.Key_Down, Qt.Key.Key_Right):
+            return self.focusNextPrevChild(True)
+        if not is_text_input and key in (Qt.Key.Key_GamepadDpadUp, Qt.Key.Key_GamepadLeft):
+            return self.focusNextPrevChild(False)
+        if not is_text_input and key in (Qt.Key.Key_GamepadDpadDown, Qt.Key.Key_GamepadRight):
             return self.focusNextPrevChild(True)
         return False
 
@@ -399,6 +481,15 @@ class MainWindow(QMainWindow):
         except Exception:
             logging.exception("Error handling console key event")
         super().keyPressEvent(event)
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # type: ignore[override]
+        if (
+            self.console_mode_enabled
+            and event.type() == QEvent.Type.FocusIn
+            and isinstance(watched, (QLineEdit, QComboBox))
+        ):
+            self._show_virtual_keyboard()
+        return super().eventFilter(watched, event)
 
     # --- Base de datos ---
     def _build_db_tab(self) -> None:
@@ -507,9 +598,10 @@ class MainWindow(QMainWindow):
         self.chk_console_mode.toggled.connect(lambda checked: self._apply_console_mode(checked, save=True))
         console_layout.addWidget(self.chk_console_mode)
         lbl_console_hint = QLabel(
-            "Al activar este modo, la aplicación arranca en pantalla completa y habilita atajos básicos "
-            "para mando/teclado: F11 o Guía alternan pantalla completa, Retroceso/Escape retroceden y "
-            "RePág/AvPág cambian entre pestañas. Cursores sirven para moverse por los controles."
+            "Al activar este modo, la aplicación arranca en pantalla completa y habilita atajos de mando: "
+            "F11 o Guía alternan pantalla completa, LB/RB (o RePág/AvPág) cambian de pestaña, A acepta, "
+            "B retrocede y la cruceta/cursores navegan entre controles. Al enfocar un campo de texto se "
+            "invoca el teclado en pantalla para escribir con el mando."
         )
         lbl_console_hint.setWordWrap(True)
         console_layout.addWidget(lbl_console_hint)
