@@ -37,6 +37,7 @@ from rom_manager.download import DownloadManager, DownloadItem, ExtractionTask
 from rom_manager.emulators import EmulatorInfo, get_all_systems, get_emulator_catalog, get_emulators_for_system
 from rom_manager.paths import config_path, session_path
 
+from rom_manager.console_input import PygameConsoleController
 from rom_manager.utils import safe_filename, extract_archive, resource_path
 
 
@@ -138,6 +139,7 @@ class MainWindow(QMainWindow):
         self._tray_show_action = None
         self._tray_exit_action = None
         self._tray_message_shown: bool = False
+        self._console_controller: Optional[PygameConsoleController] = None
         self._setup_tray_icon()
 
         # Cesta de descargas (agrupa ROMs) y estructura de búsqueda
@@ -356,6 +358,16 @@ class MainWindow(QMainWindow):
         except Exception:
             logging.exception("No se pudo mostrar el teclado virtual")
 
+    def _ensure_console_controller(self) -> Optional[PygameConsoleController]:
+        """Crea el controlador de mandos si aún no existe."""
+        if self._console_controller is None:
+            try:
+                self._console_controller = PygameConsoleController(self)
+            except Exception:
+                logging.exception("No se pudo crear el controlador de mandos")
+                self._console_controller = None
+        return self._console_controller
+
     def _apply_console_mode(self, enabled: bool, *, save: bool = False, initial: bool = False) -> None:
         """
         Activa o desactiva el modo consola (pantalla completa + atajos de mando)
@@ -378,6 +390,12 @@ class MainWindow(QMainWindow):
                     self.setWindowState(self.windowState() & ~Qt.WindowState.WindowFullScreen)
                 else:
                     self.showNormal()
+
+        controller = self._ensure_console_controller()
+        if self.console_mode_enabled and controller:
+            controller.start()
+        elif controller:
+            controller.stop()
 
         if save:
             self._save_config()
@@ -419,6 +437,34 @@ class MainWindow(QMainWindow):
             self._apply_console_mode(False, save=True)
             return True
         return False
+
+    # --- Acciones expuestas para controladores externos (pygame) ---
+    def trigger_console_activate(self) -> None:
+        self._activate_focused_control()
+
+    def trigger_console_back(self) -> None:
+        self._handle_console_back_action()
+
+    def trigger_console_tab_left(self) -> None:
+        self._switch_tab_with_delta(-1)
+
+    def trigger_console_tab_right(self) -> None:
+        self._switch_tab_with_delta(1)
+
+    def trigger_console_toggle(self) -> None:
+        self._apply_console_mode(not self.console_mode_enabled, save=True)
+
+    def trigger_console_focus_next(self) -> None:
+        try:
+            self.focusNextPrevChild(True)
+        except Exception:
+            logging.exception("No se pudo mover el foco al siguiente control")
+
+    def trigger_console_focus_prev(self) -> None:
+        try:
+            self.focusNextPrevChild(False)
+        except Exception:
+            logging.exception("No se pudo mover el foco al control anterior")
 
     def _handle_gamepad_navigation(self, key: int) -> bool:
         """
@@ -3276,6 +3322,8 @@ class MainWindow(QMainWindow):
             self._save_config()
         except Exception:
             pass
+        if self._console_controller:
+            self._console_controller.stop()
         if self.tray_icon and self.tray_icon.isVisible():
             self.tray_icon.hide()
         self.background_downloads = False
