@@ -11,6 +11,7 @@ import json
 import logging
 import sqlite3
 import math
+import subprocess
 from typing import Optional, List, Dict, Sequence
 
 if __package__ is None or __package__ == "":
@@ -103,6 +104,225 @@ class MainWindow(QMainWindow):
         ".002",
         ".003",
     }
+
+    _RETROBAT_ROM_FOLDERS: Dict[str, str] = {
+        "3do": "3DO",
+        "3ds": "Nintendo 3DS",
+        "actionmax": "Actionmax",
+        "adam": "Coleco Adam",
+        "advision": "Adventure Vision",
+        "amiga500": "Amiga OCS/ECS",
+        "amiga1200": "Amiga AGA",
+        "amiga4000": "Amiga 4000",
+        "amigacd32": "Amiga CD32",
+        "amigacdtv": "Amiga CDTV",
+        "amstradcpc": "Amstrad CPC",
+        "apple2": "Apple II",
+        "apple2gs": "Apple IIGS",
+        "aquarius": "Mattel Aquarius",
+        "arcadia": "Arcadia 2001 (Gen 2 Arcade)",
+        "atari2600": "Atari 2600",
+        "atari5200": "Atari 5200",
+        "atari7800": "Atari 7800",
+        "atari800": "Atari 800",
+        "atarist": "Atari ST",
+        "cgenius": "C-Genie",
+        "cavestory": "Cave Story (port)",
+        "cdi": "Philips CD-i",
+        "cps1": "Capcom CPS-1 Arcade",
+        "cps2": "Capcom CPS-2 Arcade",
+        "cps3": "Capcom CPS-3 Arcade",
+        "doom3": "Doom 3 (game engine port)",
+        "dos": "MS-DOS",
+        "dreamcast": "Sega Dreamcast",
+        "fbneo": "FinalBurn Neo Arcade",
+        "fds": "Nintendo Famicom Disk System",
+        "gameandwatch": "Nintendo Game & Watch",
+        "gamegear": "Sega Game Gear",
+        "gb": "Nintendo Game Boy",
+        "gba": "Nintendo Game Boy Advance",
+        "gbc": "Nintendo Game Boy Color",
+        "gp32": "GamePark GP32",
+        "n64": "Nintendo 64",
+        "nds": "Nintendo DS",
+        "neogeo": "SNK Neo Geo",
+        "neogeocd": "SNK Neo Geo CD",
+        "nes": "Nintendo Entertainment System",
+        "psx": "Sony PlayStation (PS1)",
+        "ps2": "Sony PlayStation 2",
+        "psp": "Sony PlayStation Portable",
+        "psvita": "Sony PlayStation Vita",
+        "saturn": "Sega Saturn",
+        "snes": "Super Nintendo Entertainment System",
+        "megadrive": "Sega Mega Drive / Genesis",
+        "megacd": "Sega Mega CD (Mega-CD)",
+        "mastersystem": "Sega Master System",
+        "vectrex": "Vectrex",
+        "zx81": "Sinclair ZX81",
+        "zxspectrum": "ZX Spectrum",
+    }
+
+    _RETROBAT_EMULATOR_FOLDERS: Dict[str, str] = {
+        "3dsen": "3DS Emulator (probablemente Citra o frontend)",
+        "altirra": "Altirra (Emulador Atari 8-bit)",
+        "applewin": "AppleWin (Emulador Apple II)",
+        "arcadeflashweb": "Arcade Flash Web (Flash Player Arcade)",
+        "ares": "ARES (Multisistema)",
+        "azahar": "Azahar (Frontend/Emulador)",
+        "bigpemu": "BigPEmu (Emulador portátil)",
+        "bizhawk": "BizHawk (Multisistema)",
+        "capriceforever": "Caprice Forever (Amstrad CPC)",
+        "cdogs": "cdogs SDL (Juego, no emulador)",
+        "cemu": "Cemu (Wii U emulator)",
+        "cgenius": "C-Genie Emulator",
+        "chihiro": "Chihiro (Arcade system)",
+        "citra": "Citra (Nintendo 3DS emulator)",
+        "citron": "Citron (Versión avanzada Citra)",
+        "corsixth": "CorsixTH (Theme Hospital engine)",
+        "cxbx-reloaded": "Cxbx-Reloaded (Xbox emulator)",
+        "daphne": "Daphne (Laserdisc arcade emulator)",
+        "demul": "Demul (Dreamcast/Naomi/Xbox Classic)",
+        "demul-old": "Demul (versión antigua)",
+        "devilutionx": "DevilutionX (Diablo engine)",
+        "dhewm3": "DHEWM3 (Doom 3 engine port)",
+        "dolphin-emu": "Dolphin (GameCube/Wii)",
+        "dolphin-triforce": "Dolphin-Triforce variant",
+        "dosbox": "DOSBox (DOS emulator)",
+        "duckstation": "DuckStation (PS1 emulator)",
+        "eden": "Eden (PS1/PS2 frontend)",
+        "eduke32": "EDuke32 (Duke Nukem)",
+        "eka2l1": "EKA2L1 (Symbian emulator)",
+        "fbneo": "FinalBurn Neo",
+        "flycast": "Flycast (Dreamcast/Atomiswave)",
+        "fpinball": "Future Pinball",
+        "gemrb": "GEMRB (Baldur’s Gate engine)",
+        "gopher64": "Gopher64 (C64 emulator)",
+        "gsplus": "GS+ (Apple IIgs emulator)",
+        "gzdoom": "GZDoom (Doom engine)",
+        "hatari": "Hatari (Atari ST/STE/TT/Falcon)",
+        "hbmame": "Homebrew MAME",
+        "hypseus": "Hypseus (Coleco/A7800)",
+        "jgenesis": "JGenesis (Genesis/MegaDrive)",
+        "jynx": "Jynx (Atari Lynx)",
+        "kega-fusion": "Kega Fusion (Sega)",
+        "kronos": "Kronos (Arcade)",
+        "lime3ds": "LIME3DS (3DS emulator)",
+        "love": "LÖVE (Lua game engine)",
+        "m2emulator": "M2 Emulator (Arcade)",
+        "magicengine": "MagicEngine (PC Engine/Turbografx)",
+        "mame": "MAME",
+        "mandarine": "Mandarine emu",
+        "mednafen": "Mednafen",
+        "melonds": "melonDS (Nintendo DS emulator)",
+        "mesen": "Mesen (NES/Famicom)",
+        "mgba": "mGBA (Game Boy Advance emulator)",
+        "mupen64": "Mupen64Plus (N64)",
+        "nosgba": "NO$GBA (GBA/DS emulator)",
+        "openbor": "OpenBOR (Beat-em-up engine)",
+        "opengoal": "OpenGOAL (Engine)",
+        "openjazz": "OpenJAZZ (Jazz Jackrabbit engine)",
+        "openmsx": "openMSX (MSX)",
+        "oricutron": "Oricutron (Oric emulator)",
+        "pcsx2": "PCSX2 (PS2 emulator)",
+        "pcsx2-16": "PCSX2 v1.6",
+        "pdark": "PC Dark (Engine)",
+        "phoenix": "Phoenix emu",
+        "pico8": "PICO-8 (Fantasy console)",
+        "play": "Play! (PS2 emulator)",
+        "ppsspp": "PPSSPP (PSP emulator)",
+        "project64": "Project64 (N64 emulator)",
+        "psxmame": "PSX in MAME core",
+        "raine": "Raine (Arcade emulator)",
+        "raze": "Raze (Doom/Heretic/Hexen engine)",
+        "redream": "reDream (Dreamcast)",
+        "retroarch": "RetroArch (Frontend + Cores)",
+        "rpcs3": "RPCS3 (PS3 emulator)",
+        "rpcs5": "RPCS5 (PS5 emulator)",
+        "ruffle": "Ruffle (Flash emulator)",
+        "ryujinx": "Ryujinx (Nintendo Switch)",
+        "scummvm": "ScummVM (Adventure engines)",
+        "shadps4": "ShadePS4 (PS4 emulator)",
+        "simcoupe": "SimCoupe (SPECTRUM clone)",
+        "simple64": "Simple64 (C64 emulator)",
+        "singe2": "Singe2 engine",
+        "snes9x": "Snes9x (SNES emulator)",
+        "soh": "Secrets of Harmony (mod engine)",
+        "solarus": "Solarus (Zelda engine)",
+        "sonic3air": "Sonic 3 A.I.R. engine",
+        "sonicmania": "Sonic Mania engine",
+        "sonicretro": "Sonic Retro projects",
+        "sonicretrocd": "Sonic Retro CD",
+        "ssf": "SSF (Sega Saturn emulator)",
+        "starship": "Starship (Emulator)",
+        "steam": "Steam (not an emulator)",
+        "stella": "Stella (Atari 2600 emulator)",
+        "sudachi": "Sudachi (Emulator engine)",
+        "supermodel": "Supermodel (Arcade Model3)",
+        "suyu": "Suyu emu",
+        "teknoparrot": "TeknoParrot (Arcade)",
+        "theforceengine": "The Force Engine (Star Wars)",
+        "tsugaru": "Tsugaru engine",
+        "vita3k": "Vita3K (PS Vita emulator)",
+        "vpinball": "Visual Pinball",
+        "winuae": "WinUAE (Amiga emulation)",
+        "xemu": "Xemu (Xbox emulator)",
+        "xenia": "Xenia (Xbox One emulator)",
+        "xenia-canary": "Xenia Canary",
+        "xenia-manager": "Xenia Manager",
+        "xm6pro": "XM6Pro (SharpX68000)",
+        "xroar": "XRoar (Dragon/CoCo)",
+        "yabasanshiro": "Yaba Sanshiro (Saturn emulator)",
+        "yuzu": "Yuzu (Nintendo Switch)",
+        "zesarux": "ZEsarUX (ZX Spectrum)",
+        "zinc": "Zinc (Atari ST/STE emulator)",
+    }
+
+    _RETROBAT_BIOS_FOLDERS: Dict[str, str] = {
+        "cannonball": "Cannonball (engine de Out Run)",
+        "Databases": "Bases de datos internas (MAME / RetroArch)",
+        "dc": "Sega Dreamcast",
+        "dinothawr": "Dinothawr (juego homebrew)",
+        "dolphin-emu": "Nintendo GameCube / Wii (Dolphin)",
+        "dragon": "Dragon 32 / Dragon 64",
+        "eka2l1": "Symbian OS (EKA2L1)",
+        "fba": "Final Burn Alpha (Arcade)",
+        "fbalpha2012": "Final Burn Alpha 2012",
+        "fbneo": "Final Burn Neo (Arcade)",
+        "fmtowns": "Fujitsu FM Towns",
+        "fmtownsux": "Fujitsu FM Towns UX",
+        "hatari": "Atari ST / STE / TT / Falcon",
+        "hatarib": "Atari ST (variantes BIOS)",
+        "hbmame": "HB-MAME (homebrew arcade)",
+        "HdPacks": "Paquetes HD (MAME / otros)",
+        "keropi": "PC-98 (NEC)",
+        "kronos": "Sega Saturn (Kronos emulator)",
+        "Machines": "MAME (definiciones de máquinas)",
+        "mame": "MAME (Arcade)",
+        "mame2000": "MAME 2000",
+        "mame2003": "MAME 2003",
+        "mame2003-plus": "MAME 2003 Plus",
+        "mame2010": "MAME 2010",
+        "mame2014": "MAME 2014",
+        "mame2016": "MAME 2016",
+        "melonDS DS": "Nintendo DS (melonDS BIOS)",
+        "Mupen64plus": "Nintendo 64 (Mupen64Plus)",
+        "neocd": "Neo Geo CD",
+        "np2kai": "NEC PC-98 (Neko Project II Kai)",
+        "nxengine": "Cave Story (NXEngine)",
+        "openlara": "Tomb Raider (OpenLara engine)",
+        "openmsx": "MSX / MSX2 / TurboR",
+        "pcsx2": "Sony PlayStation 2",
+        "PPSSPP": "Sony PlayStation Portable",
+        "psxmame": "PlayStation 1 (PSX vía MAME)",
+        "quasi88": "NEC PC-8801",
+        "raine": "Arcade (Raine emulator)",
+        "same_cdi": "Philips CD-i",
+        "scummvm": "Motores LucasArts / aventuras gráficas",
+        "swanstation": "Sony PlayStation (DuckStation core)",
+        "vice": "Commodore (C64 / C128 / VIC-20 / PET)",
+        "xmil": "Sharp X1",
+        "xrick": "Rick Dangerous (engine)",
+    }
     def __init__(self):
         super().__init__()
         icon_path = resource_path("resources/romMan.ico")
@@ -134,6 +354,9 @@ class MainWindow(QMainWindow):
         self.items: List[DownloadItem] = []
         self._emulator_catalog: List[EmulatorInfo] = []
         self._current_emulator: Optional[EmulatorInfo] = None
+        self._retrobat_root: str = ""
+        self._retrobat_exe: str = ""
+        self._retrobat_inventory: List[Dict[str, object]] = []
         self.tray_icon: Optional[QSystemTrayIcon] = None
         self._tray_menu: Optional[QMenu] = None
         self._tray_show_action = None
@@ -153,11 +376,13 @@ class MainWindow(QMainWindow):
         tabs = QTabWidget(); self.setCentralWidget(tabs); self.tabs = tabs
         # Crear contenedores para cada pestaña
         self.tab_selector = QWidget()
+        self.tab_frontends = QWidget()
         self.tab_emulators = QWidget()
         self.tab_downloads = QWidget()
         self.tab_settings = QWidget()
         # Añadir pestañas en orden: Selector, Emuladores, Descargas, Ajustes
         tabs.addTab(self.tab_selector, "Selector de ROMs")
+        tabs.addTab(self.tab_frontends, "Frontends")
         tabs.addTab(self.tab_emulators, "Emuladores")
         tabs.addTab(self.tab_downloads, "Descargas")
         tabs.addTab(self.tab_settings, "Ajustes")
@@ -170,10 +395,13 @@ class MainWindow(QMainWindow):
 
         # Construir las pestañas
         self._build_selector_tab()
+        self._build_frontends_tab()
         self._build_emulators_tab()
         # La cesta se construirá dentro del selector, no como pestaña aparte
         self._build_downloads_tab()
         self._build_settings_tab()
+
+        tabs.currentChanged.connect(self._on_tab_changed)
 
 
 
@@ -537,6 +765,16 @@ class MainWindow(QMainWindow):
             self._show_virtual_keyboard()
         return super().eventFilter(watched, event)
 
+    def _on_tab_changed(self, index: int) -> None:
+        try:
+            widget = self.tabs.widget(index)
+        except Exception:
+            return
+        if widget is self.tab_frontends:
+            if not self._retrobat_root:
+                self._ensure_retrobat_path_configured(prompt=True)
+            self._scan_retrobat_inventory()
+
     # --- Base de datos ---
     def _build_db_tab(self) -> None:
         lay = QVBoxLayout(self.tab_db)
@@ -693,6 +931,18 @@ class MainWindow(QMainWindow):
         basket_label = QLabel("Cesta de descargas")
         basket_label.setStyleSheet("font-weight: bold; margin-top: 8px;")
         lay.addWidget(basket_label)
+
+        download_target_box = QGroupBox("Destino de descarga")
+        target_layout = QHBoxLayout(download_target_box)
+        target_layout.setContentsMargins(8, 4, 8, 4)
+        self.cmb_download_target = QComboBox()
+        self.cmb_download_target.addItem("Descarga Windows", "windows")
+        self.cmb_download_target.addItem("Descarga RetroBat", "retrobat")
+        self.cmb_download_target.currentIndexChanged.connect(self._on_download_target_changed)
+        target_layout.addWidget(QLabel("Enviar descargas a:"))
+        target_layout.addWidget(self.cmb_download_target, 1)
+        lay.addWidget(download_target_box)
+
         self.table_basket = QTableWidget(0, 6)
         self.table_basket.setHorizontalHeaderLabels([
             "ROM", "Sistema", "Servidor", "Formato", "Idioma", "Acciones"
@@ -705,6 +955,219 @@ class MainWindow(QMainWindow):
 
         # Inicializar la cesta vacía
         self._refresh_basket_table()
+
+    # --- Frontends (RetroBat) ---
+    def _build_frontends_tab(self) -> None:
+        """Construye la pestaña para gestionar frontends como RetroBat."""
+
+        lay = QVBoxLayout(self.tab_frontends)
+        intro = QLabel(
+            "Configura la ruta de RetroBat para inventariar ROMs, emuladores y BIOS, "
+            "además de lanzar el frontend directamente."
+        )
+        intro.setWordWrap(True)
+        lay.addWidget(intro)
+
+        path_box = QGroupBox("Ubicación de RetroBat")
+        grid = QGridLayout(path_box)
+        self.le_retrobat_root = QLineEdit()
+        self.le_retrobat_root.setPlaceholderText("Selecciona la carpeta raíz de RetroBat…")
+        self.le_retrobat_root.setReadOnly(True)
+        self.btn_retrobat_browse = QPushButton("Elegir carpeta…")
+        self.btn_retrobat_browse.clicked.connect(lambda: self._ensure_retrobat_path_configured(prompt=True))
+        self.btn_retrobat_scan = QPushButton("Actualizar inventario")
+        self.btn_retrobat_scan.clicked.connect(self._scan_retrobat_inventory)
+        grid.addWidget(QLabel("Carpeta RetroBat:"), 0, 0)
+        grid.addWidget(self.le_retrobat_root, 0, 1)
+        grid.addWidget(self.btn_retrobat_browse, 0, 2)
+        grid.addWidget(self.btn_retrobat_scan, 1, 2)
+
+        self.le_retrobat_exe = QLineEdit()
+        self.le_retrobat_exe.setPlaceholderText("Ruta del ejecutable RetroBat.exe")
+        self.le_retrobat_exe.setReadOnly(True)
+        self.btn_retrobat_exe = QPushButton("Elegir .exe…")
+        self.btn_retrobat_exe.clicked.connect(self._choose_retrobat_exe)
+        self.btn_retrobat_launch = QPushButton("Ejecutar RetroBat")
+        self.btn_retrobat_launch.clicked.connect(self._launch_retrobat)
+        grid.addWidget(QLabel("Ejecutable:"), 1, 0)
+        grid.addWidget(self.le_retrobat_exe, 1, 1)
+        grid.addWidget(self.btn_retrobat_exe, 2, 2)
+        grid.addWidget(self.btn_retrobat_launch, 2, 1)
+        lay.addWidget(path_box)
+
+        summary_box = QGroupBox("Resumen de contenido")
+        summary_layout = QVBoxLayout(summary_box)
+        self.lbl_retrobat_summary = QLabel("Selecciona la carpeta de RetroBat para ver el inventario.")
+        self.lbl_retrobat_summary.setWordWrap(True)
+        summary_layout.addWidget(self.lbl_retrobat_summary)
+        lay.addWidget(summary_box)
+
+        systems_box = QGroupBox("Sistemas disponibles")
+        systems_layout = QHBoxLayout(systems_box)
+        self.table_retrobat_systems = QTableWidget(0, 5)
+        self.table_retrobat_systems.setHorizontalHeaderLabels([
+            "Carpeta", "Sistema", "ROMs", "Emulador", "BIOS"
+        ])
+        self.table_retrobat_systems.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table_retrobat_systems.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table_retrobat_systems.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table_retrobat_systems.itemSelectionChanged.connect(self._on_retrobat_system_selected)
+
+        self.list_retrobat_roms = QListWidget()
+        self.list_retrobat_roms.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+
+        systems_layout.addWidget(self.table_retrobat_systems, 2)
+        systems_layout.addWidget(self.list_retrobat_roms, 3)
+        lay.addWidget(systems_box)
+
+        lay.addStretch()
+
+    def _ensure_retrobat_path_configured(self, *, prompt: bool = False) -> bool:
+        if self._retrobat_root and os.path.isdir(self._retrobat_root):
+            self.le_retrobat_root.setText(self._retrobat_root)
+            return True
+
+        if not prompt:
+            return False
+
+        QMessageBox.information(
+            self,
+            "RetroBat",
+            "Selecciona la carpeta raíz de RetroBat para poder inventariar ROMs y lanzar el frontend.",
+        )
+        base = self._retrobat_root or os.getcwd()
+        path = QFileDialog.getExistingDirectory(self, "Seleccionar carpeta RetroBat", base)
+        if not path:
+            return False
+
+        self._retrobat_root = path
+        self.le_retrobat_root.setText(path)
+        default_exe = os.path.join(path, "RetroBat.exe")
+        if os.path.isfile(default_exe):
+            self._retrobat_exe = default_exe
+            self.le_retrobat_exe.setText(default_exe)
+        self._scan_retrobat_inventory()
+        self._save_config()
+        return True
+
+    def _choose_retrobat_exe(self) -> None:
+        if not self._ensure_retrobat_path_configured(prompt=True):
+            return
+        base = self._retrobat_root
+        exe_path, _ = QFileDialog.getOpenFileName(self, "Seleccionar RetroBat.exe", base, "Ejecutables (*.exe)")
+        if exe_path:
+            self._retrobat_exe = exe_path
+            self.le_retrobat_exe.setText(exe_path)
+            self._save_config()
+
+    def _launch_retrobat(self) -> None:
+        exe = self.le_retrobat_exe.text().strip() or self._retrobat_exe
+        if not exe and self._retrobat_root:
+            tentative = os.path.join(self._retrobat_root, "RetroBat.exe")
+            if os.path.isfile(tentative):
+                exe = tentative
+                self.le_retrobat_exe.setText(tentative)
+                self._retrobat_exe = tentative
+        if not exe:
+            QMessageBox.warning(self, "RetroBat", "No se ha configurado el ejecutable de RetroBat.")
+            return
+        if not os.path.isfile(exe):
+            QMessageBox.warning(self, "RetroBat", "La ruta configurada de RetroBat.exe no existe.")
+            return
+        try:
+            if os.name == "nt":
+                os.startfile(exe)  # type: ignore[attr-defined]
+            else:
+                subprocess.Popen([exe], cwd=os.path.dirname(exe))
+        except Exception as exc:
+            logging.exception("No se pudo lanzar RetroBat")
+            QMessageBox.critical(self, "RetroBat", f"No se pudo ejecutar RetroBat: {exc}")
+
+    def _scan_retrobat_inventory(self) -> None:
+        if not self._retrobat_root:
+            return
+        rom_base = Path(self._retrobat_root) / "roms"
+        emu_base = Path(self._retrobat_root) / "emulators"
+        bios_base = Path(self._retrobat_root) / "bios"
+        inventory: List[Dict[str, object]] = []
+        for folder, display in self._RETROBAT_ROM_FOLDERS.items():
+            rom_dir = rom_base / folder
+            rom_count = sum(1 for p in rom_dir.rglob("*") if p.is_file()) if rom_dir.exists() else 0
+            has_emulator = (emu_base / folder).exists()
+            has_bios = (bios_base / folder).exists()
+            inventory.append(
+                {
+                    "folder": folder,
+                    "display": display,
+                    "roms": rom_count,
+                    "emulator": has_emulator,
+                    "bios": has_bios,
+                }
+            )
+        self._retrobat_inventory = inventory
+        self._populate_retrobat_table()
+        self._refresh_retrobat_summary()
+
+    def _populate_retrobat_table(self) -> None:
+        if not hasattr(self, "table_retrobat_systems"):
+            return
+        self.table_retrobat_systems.setRowCount(0)
+        for entry in self._retrobat_inventory:
+            row = self.table_retrobat_systems.rowCount()
+            self.table_retrobat_systems.insertRow(row)
+            self.table_retrobat_systems.setItem(row, 0, QTableWidgetItem(str(entry["folder"])))
+            self.table_retrobat_systems.setItem(row, 1, QTableWidgetItem(str(entry["display"])))
+            self.table_retrobat_systems.setItem(row, 2, QTableWidgetItem(str(entry["roms"])))
+            self.table_retrobat_systems.setItem(row, 3, QTableWidgetItem("Sí" if entry["emulator"] else "No"))
+            self.table_retrobat_systems.setItem(row, 4, QTableWidgetItem("Sí" if entry["bios"] else "No"))
+
+        if self.table_retrobat_systems.rowCount() > 0:
+            self.table_retrobat_systems.selectRow(0)
+
+    def _refresh_retrobat_summary(self) -> None:
+        if not hasattr(self, "lbl_retrobat_summary"):
+            return
+        if not self._retrobat_root:
+            self.lbl_retrobat_summary.setText("Selecciona la carpeta de RetroBat para ver el inventario.")
+            return
+        total_roms = sum(int(entry.get("roms", 0)) for entry in self._retrobat_inventory)
+        total_emus = sum(1 for entry in self._retrobat_inventory if entry.get("emulator"))
+        total_bios = sum(1 for entry in self._retrobat_inventory if entry.get("bios"))
+        self.lbl_retrobat_summary.setText(
+            f"ROMs: {total_roms} · Emuladores localizados: {total_emus} · Carpetas BIOS: {total_bios}"
+        )
+
+    def _on_retrobat_system_selected(self) -> None:
+        if not self._retrobat_inventory:
+            return
+        selected = self.table_retrobat_systems.selectedItems()
+        if not selected:
+            return
+        folder = selected[0].text()
+        self._update_retrobat_rom_list(folder)
+
+    def _update_retrobat_rom_list(self, folder: str) -> None:
+        if not hasattr(self, "list_retrobat_roms"):
+            return
+        self.list_retrobat_roms.clear()
+        if not self._retrobat_root:
+            return
+        rom_dir = Path(self._retrobat_root) / "roms" / folder
+        if not rom_dir.exists():
+            self.list_retrobat_roms.addItem("La carpeta de ROMs no existe para este sistema.")
+            return
+        files = [p for p in rom_dir.iterdir() if p.is_file()]
+        if not files:
+            self.list_retrobat_roms.addItem("No hay ROMs en esta carpeta.")
+            return
+        files = sorted(files, key=lambda p: p.name.lower())
+        max_items = 500
+        for idx, file in enumerate(files):
+            if idx >= max_items:
+                remaining = len(files) - max_items
+                self.list_retrobat_roms.addItem(f"… y {remaining} archivos más")
+                break
+            self.list_retrobat_roms.addItem(file.name)
 
     # --- Emuladores ---
     def _build_emulators_tab(self) -> None:
@@ -2599,6 +3062,9 @@ class MainWindow(QMainWindow):
                 'chk_create_sys_dirs': self.chk_create_sys_dirs.isChecked(),
                 'emulator_dir': self.le_emulator_dir.text().strip(),
                 'emulator_delete_archive': self.chk_emulator_delete.isChecked(),
+                'retrobat_root': self._retrobat_root,
+                'retrobat_exe': self._retrobat_exe,
+                'download_target': self.cmb_download_target.currentData() if hasattr(self, 'cmb_download_target') else 'windows',
                 'basket_items': basket_data,
                 'no_confirm_cancel': self.no_confirm_cancel,
                 'hide_server_warning': self.hide_server_warning,
@@ -2631,6 +3097,9 @@ class MainWindow(QMainWindow):
             chk_sys = bool(data.get('chk_create_sys_dirs', False))
             emulator_dir = str(data.get('emulator_dir', '') or '')
             emulator_delete = bool(data.get('emulator_delete_archive', False))
+            retrobat_root = str(data.get('retrobat_root', '') or '')
+            retrobat_exe = str(data.get('retrobat_exe', '') or '')
+            download_target = str(data.get('download_target', 'windows') or 'windows')
             console_mode = bool(data.get('console_mode_enabled', False))
 
             self.le_db.setText(db_path)
@@ -2642,6 +3111,16 @@ class MainWindow(QMainWindow):
             self.chk_create_sys_dirs.setChecked(chk_sys)
             self.le_emulator_dir.setText(emulator_dir)
             self.chk_emulator_delete.setChecked(emulator_delete)
+            self._retrobat_root = retrobat_root
+            self._retrobat_exe = retrobat_exe
+            if hasattr(self, 'le_retrobat_root'):
+                self.le_retrobat_root.setText(retrobat_root)
+            if hasattr(self, 'le_retrobat_exe'):
+                self.le_retrobat_exe.setText(retrobat_exe)
+            if hasattr(self, 'cmb_download_target'):
+                idx = self.cmb_download_target.findData(download_target)
+                if idx != -1:
+                    self.cmb_download_target.setCurrentIndex(idx)
             self.console_mode_enabled = console_mode
             if hasattr(self, "chk_console_mode"):
                 self.chk_console_mode.blockSignals(True)
@@ -2666,6 +3145,8 @@ class MainWindow(QMainWindow):
             self.hide_server_warning = bool(data.get('hide_server_warning', False))
             # Aplicar modo consola en la ventana inicial
             self._apply_console_mode(self.console_mode_enabled, save=False, initial=True)
+            if self._retrobat_root:
+                self._scan_retrobat_inventory()
         except Exception:
             logging.exception('Failed to load configuration', exc_info=True)
             self._saved_basket_json = ''
@@ -3085,7 +3566,47 @@ class MainWindow(QMainWindow):
             return
         item['selected_lang'] = combo.currentIndex()
 
-    def _process_basket_item_to_downloads(self, rom_id: int, base_dir: str) -> None:
+    def _on_download_target_changed(self, _: int) -> None:
+        target = self.cmb_download_target.currentData()
+        if target == "retrobat":
+            self._ensure_retrobat_path_configured(prompt=True)
+
+    def _resolve_download_destination(self) -> tuple[str, Optional[str]]:
+        target = "windows"
+        base_dir: Optional[str] = None
+        if hasattr(self, "cmb_download_target"):
+            value = self.cmb_download_target.currentData()
+            if isinstance(value, str):
+                target = value
+
+        if target == "retrobat":
+            if not self._ensure_retrobat_path_configured(prompt=True):
+                return target, None
+            base_dir = os.path.join(self._retrobat_root, "roms")
+            if not os.path.isdir(base_dir):
+                QMessageBox.warning(
+                    self,
+                    "Retrobat",
+                    "La carpeta de ROMs de RetroBat no existe. Revisa la ruta configurada.",
+                )
+                return target, None
+        else:
+            base_dir = self.le_dir.text().strip()
+            if not base_dir:
+                QMessageBox.warning(self, "Descargas", "Selecciona una carpeta de descargas en la pestaña de Ajustes.")
+                return target, None
+        return target, base_dir
+
+    def _retrobat_folder_for_system(self, system_name: str) -> str:
+        target = system_name.strip().lower()
+        for folder, display in self._RETROBAT_ROM_FOLDERS.items():
+            if target == display.lower() or target == folder.lower():
+                return folder
+            if target and target in display.lower():
+                return folder
+        return safe_filename(system_name) or "roms"
+
+    def _process_basket_item_to_downloads(self, rom_id: int, base_dir: str, target: str = "windows") -> None:
         """Convierte un elemento de la cesta en una descarga."""
         if rom_id not in self.basket_items:
             return
@@ -3108,8 +3629,14 @@ class MainWindow(QMainWindow):
         )
         final_dir = base_dir
         sys_name = group.get('system_name', '')
-        if self.chk_create_sys_dirs.isChecked() and sys_name:
+        if target == "retrobat":
+            folder_name = self._retrobat_folder_for_system(sys_name or group['name']) if sys_name or group.get('name') else ""
+            if folder_name:
+                final_dir = os.path.join(final_dir, folder_name)
+        elif self.chk_create_sys_dirs.isChecked() and sys_name:
             final_dir = os.path.join(final_dir, safe_filename(sys_name))
+
+        Path(final_dir).mkdir(parents=True, exist_ok=True)
         name = self._build_download_name(row_data['url'])
         expected_hash = row_data['hash'] if 'hash' in row_data.keys() else None
         download_item = DownloadItem(name=name, url=row_data['url'], dest_dir=final_dir, expected_hash=expected_hash, system_name=sys_name)
@@ -3139,21 +3666,19 @@ class MainWindow(QMainWindow):
         rom_id = btn.property('rom_id')
         if rom_id is None:
             return
-        dest_dir = self.le_dir.text().strip()
+        target, dest_dir = self._resolve_download_destination()
         if not dest_dir:
-            QMessageBox.warning(self, "Descargas", "Selecciona una carpeta de descargas en la pestaña de Ajustes.")
             return
-        self._process_basket_item_to_downloads(int(rom_id), dest_dir)
+        self._process_basket_item_to_downloads(int(rom_id), dest_dir, target)
         self._refresh_basket_table()
 
     def _basket_add_all_to_downloads(self) -> None:
         """Añade todas las ROM de la cesta a la cola de descargas."""
-        dest_dir = self.le_dir.text().strip()
+        target, dest_dir = self._resolve_download_destination()
         if not dest_dir:
-            QMessageBox.warning(self, "Descargas", "Selecciona una carpeta de descargas en la pestaña de Ajustes.")
             return
         for rom_id in list(self.basket_items.keys()):
-            self._process_basket_item_to_downloads(rom_id, dest_dir)
+            self._process_basket_item_to_downloads(rom_id, dest_dir, target)
         self._refresh_basket_table()
 
     def _basket_remove_item(self) -> None:
