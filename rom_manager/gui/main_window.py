@@ -12,6 +12,7 @@ import logging
 import sqlite3
 import math
 import subprocess
+import xml.etree.ElementTree as ET
 from typing import Optional, List, Dict, Sequence
 
 if __package__ is None or __package__ == "":
@@ -28,7 +29,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QFileDialog, QGroupBox, QFrame, QComboBox, QSpinBox, QTableView, QTableWidget,
     QTableWidgetItem, QHeaderView, QMessageBox, QProgressBar, QCheckBox, QTabWidget,
     QAbstractItemView, QListWidget, QListWidgetItem, QMenu, QStyle, QSystemTrayIcon,
-    QAbstractButton, QToolButton
+    QAbstractButton, QToolButton, QDialog, QDialogButtonBox
 )
 from PyQt6.QtGui import QDesktopServices, QIcon, QKeyEvent, QGuiApplication
 
@@ -104,6 +105,7 @@ class MainWindow(QMainWindow):
         ".002",
         ".003",
     }
+    _ARCADE_SYSTEM_ID = 32
 
     _RETROBAT_ROM_FOLDERS: Dict[str, str] = {
         "3do": "3DO",
@@ -903,6 +905,15 @@ class MainWindow(QMainWindow):
         lay = QVBoxLayout(self.tab_selector)
         logging.debug("Building selector tab with search and basket tables.")
 
+        self.selector_subtabs = QTabWidget()
+        self.selector_tab_consoles = QWidget()
+        self.selector_tab_arcades = QWidget()
+        self.selector_subtabs.addTab(self.selector_tab_consoles, "Consolas")
+        self.selector_subtabs.addTab(self.selector_tab_arcades, "Arcades")
+        lay.addWidget(self.selector_subtabs)
+
+        consoles_lay = QVBoxLayout(self.selector_tab_consoles)
+
         # Grupo de filtros y búsqueda
         filters = QGroupBox("Búsqueda y filtros"); f = QGridLayout(filters)
         self.le_search = QLineEdit(); self.le_search.setPlaceholderText("Buscar por ROM/etiqueta/servidor…")
@@ -917,7 +928,7 @@ class MainWindow(QMainWindow):
         f.addWidget(QLabel("Formato:"),4,0); f.addWidget(self.cmb_fmt,4,1)
         f.addWidget(self.btn_search,0,2,5,1)
         f.addWidget(self.btn_import_list,5,0,1,3)
-        lay.addWidget(filters)
+        consoles_lay.addWidget(filters)
 
         # Tabla de resultados agrupados: columnas ROM, Sistema, Servidor, Formato, Idiomas, Acciones
         self.table_results = QTableWidget(0, 6)
@@ -925,12 +936,12 @@ class MainWindow(QMainWindow):
             "ROM", "Sistema", "Servidor", "Formato", "Idiomas", "Acciones"
         ])
         self.table_results.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        lay.addWidget(self.table_results)
+        consoles_lay.addWidget(self.table_results)
 
         # Encabezado de la cesta y tabla de la cesta: se sitúan debajo de los resultados
         basket_label = QLabel("Cesta de descargas")
         basket_label.setStyleSheet("font-weight: bold; margin-top: 8px;")
-        lay.addWidget(basket_label)
+        consoles_lay.addWidget(basket_label)
 
         download_target_box = QGroupBox("Destino de descarga")
         target_layout = QHBoxLayout(download_target_box)
@@ -941,20 +952,50 @@ class MainWindow(QMainWindow):
         self.cmb_download_target.currentIndexChanged.connect(self._on_download_target_changed)
         target_layout.addWidget(QLabel("Enviar descargas a:"))
         target_layout.addWidget(self.cmb_download_target, 1)
-        lay.addWidget(download_target_box)
+        consoles_lay.addWidget(download_target_box)
 
         self.table_basket = QTableWidget(0, 6)
         self.table_basket.setHorizontalHeaderLabels([
             "ROM", "Sistema", "Servidor", "Formato", "Idioma", "Acciones"
         ])
         self.table_basket.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        lay.addWidget(self.table_basket)
+        consoles_lay.addWidget(self.table_basket)
         self.btn_basket_add_all = QPushButton("Añadir todo a descargas")
         self.btn_basket_add_all.clicked.connect(self._basket_add_all_to_downloads)
-        lay.addWidget(self.btn_basket_add_all)
+        consoles_lay.addWidget(self.btn_basket_add_all)
+
+        self._build_arcades_selector_tab()
 
         # Inicializar la cesta vacía
         self._refresh_basket_table()
+
+    def _build_arcades_selector_tab(self) -> None:
+        """Construye la subpestaña Arcades para el sistema MAME."""
+        lay = QVBoxLayout(self.selector_tab_arcades)
+        intro = QLabel("ROMs Arcade (MAME). Importa archivos TXT/CSV/XML para añadir a la cesta.")
+        intro.setWordWrap(True)
+        lay.addWidget(intro)
+
+        bar = QHBoxLayout()
+        self.btn_arcades_refresh = QPushButton("Refrescar listado")
+        self.btn_arcades_refresh.clicked.connect(self._refresh_arcades_roms)
+        self.btn_arcades_import = QPushButton("Importar lista (TXT/XML)")
+        self.btn_arcades_import.clicked.connect(self._import_arcade_rom_list)
+        bar.addWidget(self.btn_arcades_refresh)
+        bar.addWidget(self.btn_arcades_import)
+        bar.addStretch(1)
+        lay.addLayout(bar)
+
+        self.table_arcades = QTableWidget(0, 2)
+        self.table_arcades.setHorizontalHeaderLabels(["ROM", "ID"])
+        self.table_arcades.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.table_arcades.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.table_arcades.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table_arcades.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        lay.addWidget(self.table_arcades)
+
+        self.lbl_arcades_count = QLabel("ROMs Arcade (MAME): 0")
+        lay.addWidget(self.lbl_arcades_count)
 
     # --- Frontends (RetroBat) ---
     def _build_frontends_tab(self) -> None:
@@ -1781,6 +1822,7 @@ class MainWindow(QMainWindow):
         self.cmb_lang.clear();   [self.cmb_lang.addItem(c, i) for i,c in self.db.get_languages()]
         self.cmb_region.clear(); [self.cmb_region.addItem(c, i) for i,c in self.db.get_regions()]
         self.cmb_fmt.clear();    [self.cmb_fmt.addItem(x) for x in self.db.get_formats()]
+        self._refresh_arcades_roms()
 
     def _default_server_index(self, servers: List[str]) -> int:
         """Devuelve el índice de 'myrient' si está en la lista de servidores."""
@@ -1866,163 +1908,184 @@ class MainWindow(QMainWindow):
         self._display_grouped_results()
 
     def _import_rom_list(self) -> None:
-        """Importa una lista de ROM desde un archivo de texto y las añade a la cesta."""
+        """Importa una lista de ROM desde archivo para el sistema seleccionado."""
         if not self.db:
             QMessageBox.warning(self, "Importar lista", "Conecta la base de datos primero.")
             return
         sys_id = self.cmb_system.currentData()
         if sys_id is None:
-            QMessageBox.warning(
-                self,
-                "Importar lista",
-                "Selecciona un sistema específico en el filtro antes de importar una lista.",
-            )
+            QMessageBox.warning(self, "Importar lista", "Selecciona un sistema específico antes de importar.")
             return
+        self._import_list_for_system(int(sys_id), "Importar lista")
+
+    def _import_arcade_rom_list(self) -> None:
+        """Importa ROMs para Arcades (MAME)."""
+        if not self.db:
+            QMessageBox.warning(self, "Arcades", "Conecta la base de datos primero.")
+            return
+        self._import_list_for_system(self._ARCADE_SYSTEM_ID, "Arcades (MAME)")
+        self._refresh_arcades_roms()
+
+    def _import_list_for_system(self, system_id: int, title: str) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Selecciona el archivo de lista",
             "",
-            "Archivos de texto (*.txt);;Todos los archivos (*)",
+            "Listas (*.txt *.csv *.xml);;Todos los archivos (*)",
         )
         if not path:
             return
         try:
-            try:
-                with open(path, "r", encoding="utf-8") as fh:
-                    lines = fh.readlines()
-            except UnicodeDecodeError:
-                with open(path, "r", encoding="latin-1") as fh:
-                    lines = fh.readlines()
+            if Path(path).suffix.lower() == ".xml":
+                raw_names = self.parse_rom_list_from_xml(path)
+            else:
+                raw_names = self.parse_rom_list_from_txt(self._read_text_file(path))
         except Exception as exc:
-            logging.exception("Error reading ROM list file %s: %s", path, exc)
-            QMessageBox.critical(self, "Importar lista", f"No se pudo leer el archivo: {exc}")
+            logging.exception("Error importing ROM list %s", path)
+            QMessageBox.critical(self, title, f"No se pudo procesar el archivo: {exc}")
             return
-        raw_names = self._extract_rom_names_from_lines(lines)
-        if not raw_names:
-            QMessageBox.information(
-                self,
-                "Importar lista",
-                "El archivo no contiene nombres de ROM válidos.",
-            )
-            return
-        unique_names: List[tuple[str, str]] = []
-        seen_norms: set[str] = set()
+
+        unique_names: List[str] = []
+        seen: set[str] = set()
         for name in raw_names:
-            norm = self._normalize_rom_name(name)
-            if not norm or norm in seen_norms:
+            norm = self.normalize_rom_name(name)
+            if not norm or norm in seen:
                 continue
-            seen_norms.add(norm)
-            unique_names.append((name, norm))
-        if not unique_names:
-            QMessageBox.information(
-                self,
-                "Importar lista",
-                "El archivo no contiene nombres de ROM válidos tras eliminar duplicados.",
-            )
-            return
+            seen.add(norm)
+            unique_names.append(name)
+
+        matched = self.fetch_rom_ids_for_names(system_id, unique_names)
+        found_ids = [matched[name] for name in unique_names if name in matched]
+        not_found = [name for name in unique_names if name not in matched]
+
+        added_count, already_count = self.add_roms_to_download_basket(found_ids)
+        self._show_import_summary_dialog(title, added_count, not_found, already_count)
+
+    def _show_import_summary_dialog(
+        self,
+        title: str,
+        added_count: int,
+        not_found: Sequence[str],
+        already_count: int,
+    ) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"{title} · Resultado de importación")
+        dialog.setMinimumWidth(520)
+        lay = QVBoxLayout(dialog)
+        lay.addWidget(QLabel(f"Añadidos a la cesta: {added_count}"))
+        lay.addWidget(QLabel(f"Ya presentes en la cesta: {already_count}"))
+        lay.addWidget(QLabel(f"No encontrados: {len(not_found)}"))
+
+        list_widget = QListWidget()
+        list_widget.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        for name in not_found:
+            list_widget.addItem(name)
+        list_widget.setEnabled(bool(not_found))
+        lay.addWidget(list_widget)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        btn_copy = QPushButton("Copiar lista")
+        btn_copy.setEnabled(bool(not_found))
+
+        def copy_missing() -> None:
+            QGuiApplication.clipboard().setText("\n".join(not_found))
+
+        btn_copy.clicked.connect(copy_missing)
+        buttons.addButton(btn_copy, QDialogButtonBox.ButtonRole.ActionRole)
+        buttons.rejected.connect(dialog.reject)
+        lay.addWidget(buttons)
+        dialog.exec()
+
+    @staticmethod
+    def _read_text_file(path: str) -> str:
         try:
-            rom_rows = self.db.get_rom_names_by_system(int(sys_id))
-        except Exception as exc:
-            logging.exception("Error loading ROM catalog for system %s: %s", sys_id, exc)
-            QMessageBox.critical(self, "Importar lista", str(exc))
-            return
-        rom_lookup: Dict[str, List[sqlite3.Row]] = {}
-        for row in rom_rows:
-            norm = self._normalize_rom_name(row["rom_name"])
-            if not norm:
-                continue
-            rom_lookup.setdefault(norm, []).append(row)
-        added: List[str] = []
-        already: List[str] = []
-        missing: List[str] = []
-        ambiguous: List[str] = []
-        for original, norm in unique_names:
-            candidates = rom_lookup.get(norm)
-            if not candidates:
-                missing.append(original)
-                continue
-            if len(candidates) > 1:
-                ambiguous.append(original)
-                continue
-            rom_row = candidates[0]
-            rom_id = int(rom_row["rom_id"])
-            rom_name = rom_row["rom_name"]
+            return Path(path).read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            return Path(path).read_text(encoding="latin-1")
+
+    @staticmethod
+    def parse_rom_list_from_txt(text: str) -> List[str]:
+        """Parsea listas TXT/CSV separadas por comas ignorando vacíos."""
+        normalized = text.replace("\n", ",").replace("\r", ",")
+        return [token.strip() for token in normalized.split(",") if token.strip()]
+
+    @staticmethod
+    def parse_rom_list_from_xml(path: str) -> List[str]:
+        """Parsea XML HyperSpin y devuelve el atributo name de cada <game>."""
+        root = ET.parse(path).getroot()
+        result: List[str] = []
+        for game in root.findall(".//game"):
+            name = (game.attrib.get("name") or "").strip()
+            if name:
+                result.append(name)
+        return result
+
+    @staticmethod
+    def normalize_rom_name(s: str) -> str:
+        """Normaliza el nombre de una ROM para comparaciones tolerantes."""
+        text = s.lower()
+        normalized = unicodedata.normalize("NFKD", text)
+        text = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+        text = re.sub(r"\([^)]*\)", " ", text)
+        text = re.sub(r"\[[^\]]*\]", " ", text)
+        text = text.replace("-", " ").replace("_", " ")
+        text = re.sub(r"[^0-9a-z]+", " ", text)
+        return " ".join(text.split())
+
+    @staticmethod
+    def _normalize_rom_name(name: str) -> str:
+        return MainWindow.normalize_rom_name(name)
+
+    def fetch_rom_ids_for_names(self, system_id: int, names: List[str]) -> Dict[str, int]:
+        """Busca ids de ROM por nombre en lotes para un sistema."""
+        if not self.db:
+            return {}
+        return self.db.fetch_rom_ids_for_names(system_id, names)
+
+    def add_roms_to_download_basket(self, rom_ids: List[int]) -> tuple[int, int]:
+        """Añade ROMs a la cesta reutilizando la lógica existente."""
+        if not self.db:
+            return (0, 0)
+        added = 0
+        already = 0
+        for rom_id in rom_ids:
             if rom_id in self.basket_items:
-                already.append(rom_name)
+                already += 1
                 continue
-            try:
-                links = self.db.get_links_by_rom(rom_id)
-            except Exception as exc:
-                logging.exception("Error retrieving links for ROM %s: %s", rom_name, exc)
-                missing.append(original)
-                continue
+            links = self.db.get_links_by_rom(rom_id)
             if not links:
-                missing.append(original)
                 continue
+            rom_name = links[0]["rom_name"]
             group = self.search_groups.get(rom_id)
             if group is None:
                 group = self._create_group_from_links(rom_name, links)
-            if not group:
-                missing.append(original)
-                continue
             if self._add_links_to_basket(rom_id, rom_name, links, group):
-                added.append(rom_name)
+                added += 1
             else:
-                already.append(rom_name)
+                already += 1
         if added:
             self._refresh_basket_table()
-        summary_parts: List[str] = []
-        if added:
-            summary_parts.append(
-                f"Se añadieron {len(added)} ROM(s) a la cesta:\n" + self._format_name_list(added)
-            )
-        if already:
-            summary_parts.append(
-                "Ya estaban en la cesta:\n" + self._format_name_list(already)
-            )
-        if ambiguous:
-            summary_parts.append(
-                "Se omitieron por múltiples coincidencias:\n" + self._format_name_list(ambiguous)
-            )
-        if missing:
-            summary_parts.append(
-                "No se encontraron coincidencias en la base de datos:\n" + self._format_name_list(missing)
-            )
-        if not summary_parts:
-            summary_parts.append("No se añadió ninguna ROM desde el archivo seleccionado.")
-        QMessageBox.information(self, "Importar lista", "\n\n".join(summary_parts))
+        return added, already
+
+    def _refresh_arcades_roms(self) -> None:
+        """Recarga el listado de ROMs Arcade (MAME)."""
+        if not hasattr(self, "table_arcades"):
+            return
+        self.table_arcades.setRowCount(0)
+        if not self.db:
+            self.lbl_arcades_count.setText("ROMs Arcade (MAME): 0")
+            return
+        rows = self.db.get_rom_names_by_system(self._ARCADE_SYSTEM_ID)
+        for row_data in rows:
+            row = self.table_arcades.rowCount()
+            self.table_arcades.insertRow(row)
+            self.table_arcades.setItem(row, 0, QTableWidgetItem(str(row_data["rom_name"])))
+            self.table_arcades.setItem(row, 1, QTableWidgetItem(str(row_data["rom_id"])))
+        self.lbl_arcades_count.setText(f"ROMs Arcade (MAME): {len(rows)}")
 
     @classmethod
     def _extract_rom_names_from_lines(cls, lines: Sequence[str]) -> List[str]:
-        """Extrae nombres de ROM a partir de las líneas de un fichero de texto."""
-        names: List[str] = []
-        for raw_line in lines:
-            text = raw_line.strip()
-            if not text:
-                continue
-            lower = text.lower()
-            if lower.startswith("lista de archivos"):
-                continue
-            if all(ch in "=-_" for ch in text):
-                continue
-            candidate = text.strip().strip('"')
-            if candidate.startswith("- "):
-                candidate = candidate[2:]
-            if candidate.startswith("• "):
-                candidate = candidate[2:]
-            candidate = candidate.replace("\\", "/").rstrip("/")
-            try:
-                candidate = Path(candidate).name or candidate
-            except Exception:
-                candidate = candidate.split("/")[-1]
-            candidate = candidate.strip()
-            if not candidate:
-                continue
-            cleaned = cls._remove_known_extensions(candidate)
-            if not cleaned:
-                continue
-            names.append(cleaned)
-        return names
+        return cls.parse_rom_list_from_txt("\n".join(lines))
 
     @classmethod
     def _remove_known_extensions(cls, filename: str) -> str:
@@ -2038,23 +2101,6 @@ class MainWindow(QMainWindow):
                 continue
             break
         return name.strip().rstrip('.')
-
-    @staticmethod
-    def _normalize_rom_name(name: str) -> str:
-        """Normaliza el nombre de una ROM para comparaciones tolerantes a variaciones."""
-        text = name.lower()
-        # Eliminar acentos para evitar diferencias entre variantes locales
-        normalized = unicodedata.normalize("NFKD", text)
-        text = "".join(ch for ch in normalized if not unicodedata.combining(ch))
-        # Eliminar cualquier anotación entre paréntesis o corchetes (regiones, idiomas, etc.)
-        text = re.sub(r"\([^)]*\)", " ", text)
-        text = re.sub(r"\[[^\]]*\]", " ", text)
-        # Reemplazar separadores comunes por espacios para unificar criterios
-        text = text.replace("-", " ")
-        text = text.replace("_", " ")
-        # Eliminar el resto de signos de puntuación conservando letras y números
-        text = re.sub(r"[^0-9a-z]+", " ", text)
-        return " ".join(text.split())
 
     @staticmethod
     def _format_name_list(names: Sequence[str], limit: int = 12) -> str:

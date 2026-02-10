@@ -99,6 +99,47 @@ class Database:
         cur = self.conn.execute(sql, (system_id,))
         return cur.fetchall()
 
+
+    def fetch_rom_ids_for_names(self, system_id: int, names: List[str], chunk_size: int = 900) -> dict[str, int]:
+        """Busca ROMs por nombre en lotes para un sistema y devuelve nombre original->rom_id."""
+        assert self.conn
+        ordered_names: List[str] = []
+        seen: set[str] = set()
+        for name in names:
+            value = (name or "").strip()
+            if not value:
+                continue
+            key = value.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            ordered_names.append(value)
+        if not ordered_names:
+            return {}
+
+        lookup_original: dict[str, List[str]] = {}
+        lowered_values: List[str] = []
+        for value in ordered_names:
+            low = value.casefold()
+            lowered_values.append(low)
+            lookup_original.setdefault(low, []).append(value)
+
+        matched: dict[str, int] = {}
+        for i in range(0, len(lowered_values), chunk_size):
+            chunk = lowered_values[i:i + chunk_size]
+            placeholders = ",".join("?" for _ in chunk)
+            sql = (
+                "SELECT id AS rom_id, name AS rom_name FROM roms "
+                "WHERE system_id = ? AND LOWER(name) IN (" + placeholders + ")"
+            )
+            params = [system_id, *chunk]
+            cur = self.conn.execute(sql, params)
+            for row in cur.fetchall():
+                key = str(row["rom_name"]).casefold()
+                for original in lookup_original.get(key, []):
+                    matched[original] = int(row["rom_id"])
+        return matched
+
     def search_links(
         self,
         text: str = "",
