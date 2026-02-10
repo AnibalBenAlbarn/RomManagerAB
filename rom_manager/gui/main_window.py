@@ -373,6 +373,7 @@ class MainWindow(QMainWindow):
         # dependen de ellos, como `_refresh_basket_table`.
         self.basket_items: dict[int, dict] = {}
         self.search_groups: dict[int, List[sqlite3.Row]] = {}
+        self.arcades_search_groups: dict[int, dict] = {}
 
         # Tabs: mostrar primero el selector, luego emuladores, descargas y finalmente ajustes
         tabs = QTabWidget(); self.setCentralWidget(tabs); self.tabs = tabs
@@ -970,32 +971,59 @@ class MainWindow(QMainWindow):
         self._refresh_basket_table()
 
     def _build_arcades_selector_tab(self) -> None:
-        """Construye la subpestaña Arcades para el sistema MAME."""
+        """Construye la subpestaña Arcades con la misma maqueta visual que Consolas."""
         lay = QVBoxLayout(self.selector_tab_arcades)
-        intro = QLabel("ROMs Arcade (MAME). Importa archivos TXT/CSV/XML para añadir a la cesta.")
-        intro.setWordWrap(True)
-        lay.addWidget(intro)
 
-        bar = QHBoxLayout()
-        self.btn_arcades_refresh = QPushButton("Refrescar listado")
-        self.btn_arcades_refresh.clicked.connect(self._refresh_arcades_roms)
-        self.btn_arcades_import = QPushButton("Importar lista (TXT/XML)")
-        self.btn_arcades_import.clicked.connect(self._import_arcade_rom_list)
-        bar.addWidget(self.btn_arcades_refresh)
-        bar.addWidget(self.btn_arcades_import)
-        bar.addStretch(1)
-        lay.addLayout(bar)
+        filters = QGroupBox("Búsqueda y filtros"); f = QGridLayout(filters)
+        self.le_search_arcades = QLineEdit(); self.le_search_arcades.setPlaceholderText("Buscar por ROM/etiqueta/servidor…")
+        self.le_search_arcades.returnPressed.connect(self._run_arcades_search)
+        self.cmb_system_arcades = QComboBox(); self.cmb_system_arcades.addItem("Arcade (MAME)", self._ARCADE_SYSTEM_ID)
+        self.cmb_system_arcades.setEnabled(False)
+        self.cmb_lang_arcades = QComboBox(); self.cmb_lang_arcades.setEnabled(False)
+        self.cmb_region_arcades = QComboBox(); self.cmb_region_arcades.setEnabled(False)
+        self.cmb_fmt_arcades = QComboBox(); self.cmb_fmt_arcades.setEnabled(False)
+        self.btn_search_arcades = QPushButton("Buscar"); self.btn_search_arcades.clicked.connect(self._run_arcades_search)
+        self.btn_arcades_import = QPushButton("Importar lista (TXT/XML)"); self.btn_arcades_import.clicked.connect(self._import_arcade_rom_list)
+        f.addWidget(QLabel("Texto:"),0,0); f.addWidget(self.le_search_arcades,0,1)
+        f.addWidget(QLabel("Sistema:"),1,0); f.addWidget(self.cmb_system_arcades,1,1)
+        f.addWidget(QLabel("Idioma:"),2,0); f.addWidget(self.cmb_lang_arcades,2,1)
+        f.addWidget(QLabel("Región:"),3,0); f.addWidget(self.cmb_region_arcades,3,1)
+        f.addWidget(QLabel("Formato:"),4,0); f.addWidget(self.cmb_fmt_arcades,4,1)
+        f.addWidget(self.btn_search_arcades,0,2,5,1)
+        f.addWidget(self.btn_arcades_import,5,0,1,3)
+        lay.addWidget(filters)
 
-        self.table_arcades = QTableWidget(0, 2)
-        self.table_arcades.setHorizontalHeaderLabels(["ROM", "ID"])
-        self.table_arcades.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.table_arcades.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        self.table_arcades.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table_arcades.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table_arcades = QTableWidget(0, 6)
+        self.table_arcades.setHorizontalHeaderLabels([
+            "ROM", "Sistema", "Servidor", "Formato", "Idiomas", "Acciones"
+        ])
+        self.table_arcades.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         lay.addWidget(self.table_arcades)
 
-        self.lbl_arcades_count = QLabel("ROMs Arcade (MAME): 0")
-        lay.addWidget(self.lbl_arcades_count)
+        basket_label = QLabel("Cesta de descargas")
+        basket_label.setStyleSheet("font-weight: bold; margin-top: 8px;")
+        lay.addWidget(basket_label)
+
+        download_target_box = QGroupBox("Destino de descarga")
+        target_layout = QHBoxLayout(download_target_box)
+        target_layout.setContentsMargins(8, 4, 8, 4)
+        self.cmb_download_target_arcades = QComboBox()
+        self.cmb_download_target_arcades.addItem("Descarga Windows", "windows")
+        self.cmb_download_target_arcades.addItem("Descarga RetroBat", "retrobat")
+        self.cmb_download_target_arcades.currentIndexChanged.connect(self._on_arcades_download_target_changed)
+        target_layout.addWidget(QLabel("Enviar descargas a:"))
+        target_layout.addWidget(self.cmb_download_target_arcades, 1)
+        lay.addWidget(download_target_box)
+
+        self.table_basket_arcades = QTableWidget(0, 6)
+        self.table_basket_arcades.setHorizontalHeaderLabels([
+            "ROM", "Sistema", "Servidor", "Formato", "Idioma", "Acciones"
+        ])
+        self.table_basket_arcades.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        lay.addWidget(self.table_basket_arcades)
+        self.btn_basket_add_all_arcades = QPushButton("Añadir todo a descargas")
+        self.btn_basket_add_all_arcades.clicked.connect(self._basket_add_all_to_downloads)
+        lay.addWidget(self.btn_basket_add_all_arcades)
 
     # --- Frontends (RetroBat) ---
     def _build_frontends_tab(self) -> None:
@@ -1822,6 +1850,12 @@ class MainWindow(QMainWindow):
         self.cmb_lang.clear();   [self.cmb_lang.addItem(c, i) for i,c in self.db.get_languages()]
         self.cmb_region.clear(); [self.cmb_region.addItem(c, i) for i,c in self.db.get_regions()]
         self.cmb_fmt.clear();    [self.cmb_fmt.addItem(x) for x in self.db.get_formats()]
+        if hasattr(self, "cmb_lang_arcades"):
+            self.cmb_lang_arcades.clear(); [self.cmb_lang_arcades.addItem(c, i) for i,c in self.db.get_languages()]
+        if hasattr(self, "cmb_region_arcades"):
+            self.cmb_region_arcades.clear(); [self.cmb_region_arcades.addItem(c, i) for i,c in self.db.get_regions()]
+        if hasattr(self, "cmb_fmt_arcades"):
+            self.cmb_fmt_arcades.clear(); [self.cmb_fmt_arcades.addItem(x) for x in self.db.get_formats()]
         self._refresh_arcades_roms()
 
     def _default_server_index(self, servers: List[str]) -> int:
@@ -1906,6 +1940,22 @@ class MainWindow(QMainWindow):
         self.search_groups = groups
         # Mostrar resultados agrupados
         self._display_grouped_results()
+
+    def _run_arcades_search(self) -> None:
+        """Ejecuta la búsqueda de Arcades fijando el sistema MAME."""
+        if not self.db:
+            QMessageBox.warning(self, "BD", "Conecta la base de datos primero.")
+            return
+        text = self.le_search_arcades.text().strip()
+        try:
+            rows = self.db.search_links(text, self._ARCADE_SYSTEM_ID, None, None, None)
+            logging.debug("Arcades search returned %d rows for '%s'.", len(rows), text)
+        except Exception as e:
+            logging.exception("Error during arcades search: %s", e)
+            QMessageBox.critical(self, "Búsqueda Arcades", str(e))
+            return
+        self.arcades_search_groups = self._build_grouped_links(rows)
+        self._display_arcades_grouped_results()
 
     def _import_rom_list(self) -> None:
         """Importa una lista de ROM desde archivo para el sistema seleccionado."""
@@ -2068,20 +2118,9 @@ class MainWindow(QMainWindow):
         return added, already
 
     def _refresh_arcades_roms(self) -> None:
-        """Recarga el listado de ROMs Arcade (MAME)."""
-        if not hasattr(self, "table_arcades"):
-            return
-        self.table_arcades.setRowCount(0)
-        if not self.db:
-            self.lbl_arcades_count.setText("ROMs Arcade (MAME): 0")
-            return
-        rows = self.db.get_rom_names_by_system(self._ARCADE_SYSTEM_ID)
-        for row_data in rows:
-            row = self.table_arcades.rowCount()
-            self.table_arcades.insertRow(row)
-            self.table_arcades.setItem(row, 0, QTableWidgetItem(str(row_data["rom_name"])))
-            self.table_arcades.setItem(row, 1, QTableWidgetItem(str(row_data["rom_id"])))
-        self.lbl_arcades_count.setText(f"ROMs Arcade (MAME): {len(rows)}")
+        """Refresca Arcades reutilizando la búsqueda visual estilo Consolas."""
+        if hasattr(self, "le_search_arcades"):
+            self._run_arcades_search()
 
     @classmethod
     def _extract_rom_names_from_lines(cls, lines: Sequence[str]) -> List[str]:
@@ -3298,68 +3337,72 @@ class MainWindow(QMainWindow):
         opciones. Cada entrada dispone de combinaciones de servidor, formato e
         idioma para seleccionar la variante que se descargará.
         """
-        self.table_basket.setRowCount(0)
+        tables: List[QTableWidget] = [self.table_basket]
+        if hasattr(self, "table_basket_arcades"):
+            tables.append(self.table_basket_arcades)
+        for table in tables:
+            table.setRowCount(0)
         # Cada entrada en basket_items crea una fila
         for rom_id, item in self.basket_items.items():
-            row = self.table_basket.rowCount()
-            self.table_basket.insertRow(row)
-            # Columna 0: nombre de la ROM (guardar rom_id en UserRole)
-            rom_item = QTableWidgetItem(item['name'])
-            rom_item.setData(Qt.ItemDataRole.UserRole, rom_id)
-            self.table_basket.setItem(row, 0, rom_item)
-            # Columna 1: sistema
-            sys_item = QTableWidgetItem(item['group'].get('system_name', '') or '')
-            self.table_basket.setItem(row, 1, sys_item)
-            # Columna 2: selector de servidor
-            combo_srv = QComboBox()
-            for srv in item['group']['servers']:
-                combo_srv.addItem(srv or "")
-            srv_idx = item.get('selected_server', 0)
-            if srv_idx is not None and srv_idx < combo_srv.count():
-                combo_srv.setCurrentIndex(srv_idx)
-            combo_srv.setProperty('row_idx', row)
-            combo_srv.setProperty('rom_id', rom_id)
-            combo_srv.currentIndexChanged.connect(self._basket_server_changed)
-            self.table_basket.setCellWidget(row, 2, combo_srv)
-            # Columna 3: selector de formato (depende del servidor)
-            combo_fmt = QComboBox()
-            # Obtener el servidor actualmente seleccionado
-            srv_name = item['group']['servers'][srv_idx] if item['group']['servers'] else ""
-            fmt_list = item['group']['formats_by_server'].get(srv_name, [])
-            for fmt in fmt_list:
-                combo_fmt.addItem(fmt or "")
-            fmt_idx = item.get('selected_format', 0)
-            if fmt_idx is not None and fmt_idx < combo_fmt.count():
-                combo_fmt.setCurrentIndex(fmt_idx)
-            combo_fmt.setProperty('row_idx', row)
-            combo_fmt.setProperty('rom_id', rom_id)
-            combo_fmt.currentIndexChanged.connect(self._basket_format_changed)
-            self.table_basket.setCellWidget(row, 3, combo_fmt)
-            # Columna 4: selector de idiomas (depende de servidor y formato)
-            combo_lang = QComboBox()
-            fmt_name = fmt_list[fmt_idx] if fmt_list and fmt_idx < len(fmt_list) else ""
-            lang_list = item['group']['langs_by_server_format'].get((srv_name, fmt_name), [])
-            for lang_str in lang_list:
-                combo_lang.addItem(lang_str or "")
-            lang_idx = item.get('selected_lang', 0)
-            if lang_idx is not None and lang_idx < combo_lang.count():
-                combo_lang.setCurrentIndex(lang_idx)
-            combo_lang.setProperty('row_idx', row)
-            combo_lang.setProperty('rom_id', rom_id)
-            combo_lang.currentIndexChanged.connect(self._basket_language_changed)
-            self.table_basket.setCellWidget(row, 4, combo_lang)
-            # Columna 5: botones de acción (Añadir, Eliminar)
-            w = QWidget(); h = QHBoxLayout(w); h.setContentsMargins(0, 0, 0, 0)
-            btn_add = QPushButton("Añadir")
-            btn_remove = QPushButton("Eliminar")
-            btn_add.setProperty('row_idx', row)
-            btn_add.setProperty('rom_id', rom_id)
-            btn_remove.setProperty('row_idx', row)
-            btn_remove.setProperty('rom_id', rom_id)
-            btn_add.clicked.connect(self._basket_add_to_downloads)
-            btn_remove.clicked.connect(self._basket_remove_item)
-            h.addWidget(btn_add); h.addWidget(btn_remove)
-            self.table_basket.setCellWidget(row, 5, w)
+            for table in tables:
+                row = table.rowCount()
+                table.insertRow(row)
+                # Columna 0: nombre de la ROM (guardar rom_id en UserRole)
+                rom_item = QTableWidgetItem(item['name'])
+                rom_item.setData(Qt.ItemDataRole.UserRole, rom_id)
+                table.setItem(row, 0, rom_item)
+                # Columna 1: sistema
+                sys_item = QTableWidgetItem(item['group'].get('system_name', '') or '')
+                table.setItem(row, 1, sys_item)
+                # Columna 2: selector de servidor
+                combo_srv = QComboBox()
+                for srv in item['group']['servers']:
+                    combo_srv.addItem(srv or "")
+                srv_idx = item.get('selected_server', 0)
+                if srv_idx is not None and srv_idx < combo_srv.count():
+                    combo_srv.setCurrentIndex(srv_idx)
+                combo_srv.setProperty('row_idx', row)
+                combo_srv.setProperty('rom_id', rom_id)
+                combo_srv.currentIndexChanged.connect(self._basket_server_changed)
+                table.setCellWidget(row, 2, combo_srv)
+                # Columna 3: selector de formato (depende del servidor)
+                combo_fmt = QComboBox()
+                srv_name = item['group']['servers'][srv_idx] if item['group']['servers'] else ""
+                fmt_list = item['group']['formats_by_server'].get(srv_name, [])
+                for fmt in fmt_list:
+                    combo_fmt.addItem(fmt or "")
+                fmt_idx = item.get('selected_format', 0)
+                if fmt_idx is not None and fmt_idx < combo_fmt.count():
+                    combo_fmt.setCurrentIndex(fmt_idx)
+                combo_fmt.setProperty('row_idx', row)
+                combo_fmt.setProperty('rom_id', rom_id)
+                combo_fmt.currentIndexChanged.connect(self._basket_format_changed)
+                table.setCellWidget(row, 3, combo_fmt)
+                # Columna 4: selector de idiomas (depende de servidor y formato)
+                combo_lang = QComboBox()
+                fmt_name = fmt_list[fmt_idx] if fmt_list and fmt_idx < len(fmt_list) else ""
+                lang_list = item['group']['langs_by_server_format'].get((srv_name, fmt_name), [])
+                for lang_str in lang_list:
+                    combo_lang.addItem(lang_str or "")
+                lang_idx = item.get('selected_lang', 0)
+                if lang_idx is not None and lang_idx < combo_lang.count():
+                    combo_lang.setCurrentIndex(lang_idx)
+                combo_lang.setProperty('row_idx', row)
+                combo_lang.setProperty('rom_id', rom_id)
+                combo_lang.currentIndexChanged.connect(self._basket_language_changed)
+                table.setCellWidget(row, 4, combo_lang)
+                # Columna 5: botones de acción (Añadir, Eliminar)
+                w = QWidget(); h = QHBoxLayout(w); h.setContentsMargins(0, 0, 0, 0)
+                btn_add = QPushButton("Añadir")
+                btn_remove = QPushButton("Eliminar")
+                btn_add.setProperty('row_idx', row)
+                btn_add.setProperty('rom_id', rom_id)
+                btn_remove.setProperty('row_idx', row)
+                btn_remove.setProperty('rom_id', rom_id)
+                btn_add.clicked.connect(self._basket_add_to_downloads)
+                btn_remove.clicked.connect(self._basket_remove_item)
+                h.addWidget(btn_add); h.addWidget(btn_remove)
+                table.setCellWidget(row, 5, w)
 
     # --- Resultados agrupados ---
     def _display_grouped_results(self) -> None:
@@ -3424,6 +3467,98 @@ class MainWindow(QMainWindow):
             btn_add.setProperty('row_idx', row)
             btn_add.clicked.connect(self._add_group_to_basket)
             self.table_results.setCellWidget(row, 5, btn_add)
+
+    def _display_arcades_grouped_results(self) -> None:
+        """Pinta la tabla de resultados agrupados de Arcades."""
+        if not hasattr(self, "table_arcades"):
+            return
+        self.table_arcades.setRowCount(0)
+        for rom_id in sorted(self.arcades_search_groups.keys(), key=lambda x: self.arcades_search_groups[x]["name"].lower()):
+            group = self.arcades_search_groups[rom_id]
+            row = self.table_arcades.rowCount()
+            self.table_arcades.insertRow(row)
+            rom_item = QTableWidgetItem(group["name"])
+            rom_item.setData(Qt.ItemDataRole.UserRole, rom_id)
+            self.table_arcades.setItem(row, 0, rom_item)
+            sys_item = QTableWidgetItem(group.get("system_name", "") or "")
+            self.table_arcades.setItem(row, 1, sys_item)
+
+            combo_srv = QComboBox()
+            for srv in group["servers"]:
+                combo_srv.addItem(srv or "")
+            combo_srv.setCurrentIndex(group.get("selected_server", 0) if group["servers"] else 0)
+            combo_srv.setProperty('rom_id', rom_id)
+            combo_srv.setProperty('row_idx', row)
+            combo_srv.currentIndexChanged.connect(self._arcades_group_server_changed)
+            self.table_arcades.setCellWidget(row, 2, combo_srv)
+
+            combo_fmt = QComboBox()
+            sel_srv = group.get("selected_server", 0)
+            srv_name = group["servers"][sel_srv] if group["servers"] else ""
+            fmt_list = group["formats_by_server"].get(srv_name, [])
+            for fmt in fmt_list:
+                combo_fmt.addItem(fmt or "")
+            combo_fmt.setCurrentIndex(group.get("selected_format", 0) if fmt_list else 0)
+            combo_fmt.setProperty('rom_id', rom_id)
+            combo_fmt.setProperty('row_idx', row)
+            combo_fmt.currentIndexChanged.connect(self._arcades_group_format_changed)
+            self.table_arcades.setCellWidget(row, 3, combo_fmt)
+
+            combo_lang = QComboBox()
+            fmt_sel_index = group.get("selected_format", 0)
+            fmt_name = fmt_list[fmt_sel_index] if fmt_list and fmt_sel_index < len(fmt_list) else ""
+            lang_list = group["langs_by_server_format"].get((srv_name, fmt_name), [])
+            for lang_str in lang_list:
+                combo_lang.addItem(lang_str or "")
+            combo_lang.setCurrentIndex(group.get("selected_lang", 0) if lang_list else 0)
+            combo_lang.setProperty('rom_id', rom_id)
+            combo_lang.setProperty('row_idx', row)
+            combo_lang.currentIndexChanged.connect(self._arcades_group_language_changed)
+            self.table_arcades.setCellWidget(row, 4, combo_lang)
+
+            btn_add = QPushButton("Añadir")
+            btn_add.setProperty('rom_id', rom_id)
+            btn_add.clicked.connect(self._add_arcades_group_to_basket)
+            self.table_arcades.setCellWidget(row, 5, btn_add)
+
+    def _build_grouped_links(self, rows: Sequence[sqlite3.Row]) -> dict[int, dict]:
+        groups: dict[int, dict] = {}
+        for r in rows:
+            rom_id = r["rom_id"]
+            group = groups.setdefault(rom_id, {"name": r["rom_name"], "rows": [], "system_name": r["system_name"]})
+            group["rows"].append(r)
+        for group in groups.values():
+            rows_list = group["rows"]
+            servers = sorted(set((row["server"] or "") for row in rows_list))
+            formats_by_server: dict[str, List[str]] = {}
+            for srv in servers:
+                fmts = sorted(set((row["fmt"] or "") for row in rows_list if (row["server"] or "") == srv))
+                formats_by_server[srv] = fmts
+            langs_by_server_format: dict[tuple[str, str], List[str]] = {}
+            for r in rows_list:
+                srv = r["server"] or ""
+                fmt_val = r["fmt"] or ""
+                key = (srv, fmt_val)
+                lang_str = ','.join([x.strip() for x in (r["langs"] or "").split(',') if x.strip()]) or ""
+                lst = langs_by_server_format.setdefault(key, [])
+                if lang_str not in lst:
+                    lst.append(lang_str)
+            for key in langs_by_server_format:
+                langs_by_server_format[key].sort()
+            link_lookup: dict[tuple[str, str, str], sqlite3.Row] = {}
+            for r in rows_list:
+                srv = r["server"] or ""
+                fmt_val = r["fmt"] or ""
+                lang_str = ','.join([x.strip() for x in (r["langs"] or "").split(',') if x.strip()]) or ""
+                link_lookup[(srv, fmt_val, lang_str)] = r
+            group["servers"] = servers
+            group["formats_by_server"] = formats_by_server
+            group["langs_by_server_format"] = langs_by_server_format
+            group["link_lookup"] = link_lookup
+            group["selected_server"] = self._default_server_index(servers)
+            group["selected_format"] = 0
+            group["selected_lang"] = 0
+        return groups
 
     # --- Manejadores de cambios en los combos de resultados ---
     def _group_server_changed(self, index: int) -> None:
@@ -3518,6 +3653,80 @@ class MainWindow(QMainWindow):
             return
         group['selected_lang'] = combo.currentIndex()
 
+    def _arcades_group_server_changed(self, index: int) -> None:
+        combo = self.sender()
+        if combo is None:
+            return
+        rom_id = combo.property('rom_id')
+        row_idx = combo.property('row_idx')
+        if rom_id is None or row_idx is None:
+            return
+        group = self.arcades_search_groups.get(rom_id)
+        if not group:
+            return
+        group['selected_server'] = combo.currentIndex()
+        group['selected_format'] = 0
+        group['selected_lang'] = 0
+        row_idx = int(row_idx)
+        srv_name = group['servers'][group['selected_server']] if group['servers'] else ""
+        fmt_combo: QComboBox = self.table_arcades.cellWidget(row_idx, 3)  # type: ignore
+        fmt_combo.blockSignals(True)
+        fmt_combo.clear()
+        fmt_list = group['formats_by_server'].get(srv_name, [])
+        for fmt in fmt_list:
+            fmt_combo.addItem(fmt or "")
+        fmt_combo.setCurrentIndex(0)
+        fmt_combo.blockSignals(False)
+
+        lang_combo: QComboBox = self.table_arcades.cellWidget(row_idx, 4)  # type: ignore
+        lang_combo.blockSignals(True)
+        lang_combo.clear()
+        fmt_name = fmt_list[0] if fmt_list else ""
+        lang_list = group['langs_by_server_format'].get((srv_name, fmt_name), [])
+        for lang_str in lang_list:
+            lang_combo.addItem(lang_str or "")
+        lang_combo.setCurrentIndex(0)
+        lang_combo.blockSignals(False)
+
+    def _arcades_group_format_changed(self, index: int) -> None:
+        combo = self.sender()
+        if combo is None:
+            return
+        rom_id = combo.property('rom_id')
+        row_idx = combo.property('row_idx')
+        if rom_id is None or row_idx is None:
+            return
+        group = self.arcades_search_groups.get(rom_id)
+        if not group:
+            return
+        group['selected_format'] = combo.currentIndex()
+        group['selected_lang'] = 0
+        srv_idx = group.get('selected_server', 0)
+        srv_name = group['servers'][srv_idx] if group['servers'] else ""
+        fmt_list = group['formats_by_server'].get(srv_name, [])
+        fmt_name = fmt_list[combo.currentIndex()] if fmt_list and combo.currentIndex() < len(fmt_list) else ""
+        row_idx = int(row_idx)
+        lang_combo: QComboBox = self.table_arcades.cellWidget(row_idx, 4)  # type: ignore
+        lang_combo.blockSignals(True)
+        lang_combo.clear()
+        lang_list = group['langs_by_server_format'].get((srv_name, fmt_name), [])
+        for lang_str in lang_list:
+            lang_combo.addItem(lang_str or "")
+        lang_combo.setCurrentIndex(0 if lang_list else 0)
+        lang_combo.blockSignals(False)
+
+    def _arcades_group_language_changed(self, index: int) -> None:
+        combo = self.sender()
+        if combo is None:
+            return
+        rom_id = combo.property('rom_id')
+        if rom_id is None:
+            return
+        group = self.arcades_search_groups.get(rom_id)
+        if not group:
+            return
+        group['selected_lang'] = combo.currentIndex()
+
     def _add_group_to_basket(self) -> None:
         """
         Añade la selección actual de una ROM desde la tabla de resultados a la
@@ -3552,6 +3761,28 @@ class MainWindow(QMainWindow):
         }
         logging.debug("Added ROM %s to basket with server=%s, fmt=%s, lang=%s", group['name'], srv_name, fmt_name, lang_name)
         # Refrescar la tabla de la cesta
+        self._refresh_basket_table()
+
+    def _add_arcades_group_to_basket(self) -> None:
+        btn = self.sender()
+        if btn is None:
+            return
+        rom_id = btn.property('rom_id')
+        if rom_id is None:
+            return
+        group = self.arcades_search_groups.get(rom_id)
+        if not group:
+            return
+        srv_idx = group.get('selected_server', 0)
+        fmt_idx = group.get('selected_format', 0)
+        lang_idx = group.get('selected_lang', 0)
+        self.basket_items[rom_id] = {
+            'name': group['name'],
+            'group': group,
+            'selected_server': srv_idx,
+            'selected_format': fmt_idx,
+            'selected_lang': lang_idx,
+        }
         self._refresh_basket_table()
 
     def _basket_server_changed(self, index: int) -> None:
@@ -3614,8 +3845,19 @@ class MainWindow(QMainWindow):
 
     def _on_download_target_changed(self, _: int) -> None:
         target = self.cmb_download_target.currentData()
+        if hasattr(self, "cmb_download_target_arcades") and self.cmb_download_target_arcades.currentIndex() != self.cmb_download_target.currentIndex():
+            self.cmb_download_target_arcades.blockSignals(True)
+            self.cmb_download_target_arcades.setCurrentIndex(self.cmb_download_target.currentIndex())
+            self.cmb_download_target_arcades.blockSignals(False)
         if target == "retrobat":
             self._ensure_retrobat_path_configured(prompt=True)
+
+    def _on_arcades_download_target_changed(self, _: int) -> None:
+        if self.cmb_download_target.currentIndex() != self.cmb_download_target_arcades.currentIndex():
+            self.cmb_download_target.blockSignals(True)
+            self.cmb_download_target.setCurrentIndex(self.cmb_download_target_arcades.currentIndex())
+            self.cmb_download_target.blockSignals(False)
+        self._on_download_target_changed(0)
 
     def _resolve_download_destination(self) -> tuple[str, Optional[str]]:
         target = "windows"
