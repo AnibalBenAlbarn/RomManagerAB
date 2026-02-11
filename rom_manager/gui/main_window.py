@@ -354,6 +354,7 @@ class MainWindow(QMainWindow):
         self.manager.queue_changed.connect(self._check_background_downloads)
         self.background_downloads: bool = False
         self.items: List[DownloadItem] = []
+        self.table_dl: Optional[QTableWidget] = None
         self._emulator_catalog: List[EmulatorInfo] = []
         self._current_emulator: Optional[EmulatorInfo] = None
         self._retrobat_root: str = ""
@@ -758,15 +759,6 @@ class MainWindow(QMainWindow):
         except Exception:
             logging.exception("Error handling console key event")
         super().keyPressEvent(event)
-
-    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # type: ignore[override]
-        if (
-            self.console_mode_enabled
-            and event.type() == QEvent.Type.FocusIn
-            and isinstance(watched, (QLineEdit, QComboBox))
-        ):
-            self._show_virtual_keyboard()
-        return super().eventFilter(watched, event)
 
     def _on_tab_changed(self, index: int) -> None:
         try:
@@ -2865,19 +2857,33 @@ class MainWindow(QMainWindow):
         self._save_session_silent()
         logging.debug("Session saved after batch deletion")
 
-    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # type: ignore[override]
         """
-        Intercepta eventos del teclado para la tabla de descargas. Si se
-        presiona la tecla Suprimir (Delete) se eliminan las descargas
-        seleccionadas.
+        Intercepta eventos globales de foco y teclado.
+
+        - En modo consola, muestra teclado virtual al enfocar entradas.
+        - En la tabla de descargas, maneja Suprimir para borrar filas.
         """
-        if obj is self.table_dl and event.type() == QEvent.Type.KeyPress:
-            from PyQt6.QtGui import QKeyEvent
-            key_event = event  # type: QKeyEvent
-            if key_event.key() == Qt.Key.Key_Delete:
-                logging.debug("Delete key pressed on downloads table.")
-                self._delete_selected_items()
-                return True
+        try:
+            if (
+                self.console_mode_enabled
+                and event.type() == QEvent.Type.FocusIn
+                and isinstance(obj, (QLineEdit, QComboBox))
+            ):
+                self._show_virtual_keyboard()
+
+            table_dl = getattr(self, "table_dl", None)
+            if table_dl is not None and obj is table_dl and event.type() == QEvent.Type.KeyPress:
+                from PyQt6.QtGui import QKeyEvent
+                key_event = event  # type: QKeyEvent
+                if key_event.key() == Qt.Key.Key_Delete:
+                    logging.debug("Delete key pressed on downloads table.")
+                    self._delete_selected_items()
+                    return True
+        except Exception:
+            logging.exception("eventFilter failed")
+            return False
+
         return super().eventFilter(obj, event)
 
     # --- Menú contextual para la tabla de descargas ---
