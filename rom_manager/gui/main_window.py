@@ -1985,31 +1985,51 @@ class MainWindow(QMainWindow):
         )
         if not path:
             return
+        added_count = 0
+        already_count = 0
+        not_found: List[str] = []
+        error: Optional[Exception] = None
         try:
             if Path(path).suffix.lower() == ".xml":
                 raw_names = self.parse_rom_list_from_xml(path)
             else:
                 raw_names = self.parse_rom_list_from_txt(self._read_text_file(path))
+            logging.info("Import list parsed %d tokens from %s", len(raw_names), path)
+            if not raw_names:
+                logging.warning("Import list parser returned 0 tokens for %s", path)
+
+            unique_names: List[str] = []
+            seen: set[str] = set()
+            for raw_name in raw_names:
+                token = (raw_name or "").strip()
+                if not token:
+                    continue
+                dedupe_key = token.casefold()
+                if dedupe_key in seen:
+                    continue
+                seen.add(dedupe_key)
+                unique_names.append(token)
+
+            matched = self.fetch_rom_ids_for_names(system_id, unique_names)
+            found_ids = [matched[name] for name in unique_names if name in matched]
+            not_found = [name for name in unique_names if name not in matched]
+            logging.info(
+                "Import list DB lookup for system %s: parsed=%d found=%d not_found=%d",
+                system_id,
+                len(unique_names),
+                len(found_ids),
+                len(not_found),
+            )
+
+            added_count, already_count = self.add_roms_to_download_basket(found_ids)
         except Exception as exc:
+            error = exc
             logging.exception("Error importing ROM list %s", path)
-            QMessageBox.critical(self, title, f"No se pudo procesar el archivo: {exc}")
-            return
-
-        unique_names: List[str] = []
-        seen: set[str] = set()
-        for name in raw_names:
-            norm = self.normalize_rom_name(name)
-            if not norm or norm in seen:
-                continue
-            seen.add(norm)
-            unique_names.append(name)
-
-        matched = self.fetch_rom_ids_for_names(system_id, unique_names)
-        found_ids = [matched[name] for name in unique_names if name in matched]
-        not_found = [name for name in unique_names if name not in matched]
-
-        added_count, already_count = self.add_roms_to_download_basket(found_ids)
-        self._show_import_summary_dialog(title, added_count, not_found, already_count)
+        finally:
+            if error is not None:
+                QMessageBox.critical(self, title, f"No se pudo procesar el archivo: {error}")
+            else:
+                self._show_import_summary_dialog(title, added_count, not_found, already_count)
 
     def _show_import_summary_dialog(
         self,
@@ -2064,7 +2084,7 @@ class MainWindow(QMainWindow):
         """Parsea XML HyperSpin y devuelve el atributo name de cada <game>."""
         root = ET.parse(path).getroot()
         result: List[str] = []
-        for game in root.findall(".//game"):
+        for game in root.iter("game"):
             name = (game.attrib.get("name") or "").strip()
             if name:
                 result.append(name)
@@ -4024,9 +4044,21 @@ class MainWindow(QMainWindow):
             "selected_server": self._default_server_index(servers),
             "selected_format": 0,
             "selected_lang": 0,
-            "system_name": rows_list[0].get('system_name', ''),
+            "system_name": self._row_get(rows_list[0], "system_name", ""),
         }
         return group
+
+    @staticmethod
+    def _row_get(row: object, key: str, default: str = "") -> str:
+        try:
+            if row is not None and hasattr(row, "keys") and key in row.keys():
+                return row[key]
+        except Exception:
+            pass
+        try:
+            return row.get(key, default)
+        except Exception:
+            return default
 
     def _add_links_to_basket(
         self,
