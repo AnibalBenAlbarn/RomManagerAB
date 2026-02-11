@@ -29,7 +29,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QFileDialog, QGroupBox, QFrame, QComboBox, QSpinBox, QTableView, QTableWidget,
     QTableWidgetItem, QHeaderView, QMessageBox, QProgressBar, QCheckBox, QTabWidget,
     QAbstractItemView, QListWidget, QListWidgetItem, QMenu, QStyle, QSystemTrayIcon,
-    QAbstractButton, QToolButton, QDialog, QDialogButtonBox
+    QAbstractButton, QToolButton, QDialog, QDialogButtonBox, QTextEdit
 )
 from PyQt6.QtGui import QDesktopServices, QIcon, QKeyEvent, QGuiApplication
 
@@ -922,6 +922,7 @@ class MainWindow(QMainWindow):
         self.cmb_system = QComboBox(); self.cmb_lang = QComboBox(); self.cmb_region = QComboBox(); self.cmb_fmt = QComboBox()
         self.btn_search = QPushButton("Buscar"); self.btn_search.clicked.connect(self._run_search)
         self.btn_import_list = QPushButton("Importar lista…"); self.btn_import_list.clicked.connect(self._import_rom_list)
+        self.btn_paste_list = QPushButton("Pegar lista…"); self.btn_paste_list.clicked.connect(self._paste_rom_list)
         f.addWidget(QLabel("Texto:"),0,0); f.addWidget(self.le_search,0,1)
         f.addWidget(QLabel("Sistema:"),1,0); f.addWidget(self.cmb_system,1,1)
         f.addWidget(QLabel("Idioma:"),2,0); f.addWidget(self.cmb_lang,2,1)
@@ -929,6 +930,7 @@ class MainWindow(QMainWindow):
         f.addWidget(QLabel("Formato:"),4,0); f.addWidget(self.cmb_fmt,4,1)
         f.addWidget(self.btn_search,0,2,5,1)
         f.addWidget(self.btn_import_list,5,0,1,3)
+        f.addWidget(self.btn_paste_list,6,0,1,3)
         consoles_lay.addWidget(filters)
 
         # Tabla de resultados agrupados: columnas ROM, Sistema, Servidor, Formato, Idiomas, Acciones
@@ -984,6 +986,7 @@ class MainWindow(QMainWindow):
         self.cmb_fmt_arcades = QComboBox(); self.cmb_fmt_arcades.setEnabled(False)
         self.btn_search_arcades = QPushButton("Buscar"); self.btn_search_arcades.clicked.connect(self._run_arcades_search)
         self.btn_arcades_import = QPushButton("Importar lista (TXT/XML)"); self.btn_arcades_import.clicked.connect(self._import_arcade_rom_list)
+        self.btn_arcades_paste = QPushButton("Pegar lista…"); self.btn_arcades_paste.clicked.connect(self._paste_arcade_rom_list)
         f.addWidget(QLabel("Texto:"),0,0); f.addWidget(self.le_search_arcades,0,1)
         f.addWidget(QLabel("Sistema:"),1,0); f.addWidget(self.cmb_system_arcades,1,1)
         f.addWidget(QLabel("Idioma:"),2,0); f.addWidget(self.cmb_lang_arcades,2,1)
@@ -991,6 +994,7 @@ class MainWindow(QMainWindow):
         f.addWidget(QLabel("Formato:"),4,0); f.addWidget(self.cmb_fmt_arcades,4,1)
         f.addWidget(self.btn_search_arcades,0,2,5,1)
         f.addWidget(self.btn_arcades_import,5,0,1,3)
+        f.addWidget(self.btn_arcades_paste,6,0,1,3)
         lay.addWidget(filters)
 
         self.table_arcades = QTableWidget(0, 6)
@@ -1976,6 +1980,25 @@ class MainWindow(QMainWindow):
         self._import_list_for_system(self._ARCADE_SYSTEM_ID, "Arcades (MAME)")
         self._refresh_arcades_roms()
 
+    def _paste_rom_list(self) -> None:
+        """Permite pegar una lista manual de ROMs para el sistema seleccionado."""
+        if not self.db:
+            QMessageBox.warning(self, "Pegar lista", "Conecta la base de datos primero.")
+            return
+        sys_id = self.cmb_system.currentData()
+        if sys_id is None:
+            QMessageBox.warning(self, "Pegar lista", "Selecciona un sistema específico antes de continuar.")
+            return
+        self._import_pasted_list_for_system(int(sys_id), "Pegar lista")
+
+    def _paste_arcade_rom_list(self) -> None:
+        """Permite pegar manualmente una lista de ROMs de Arcades (MAME)."""
+        if not self.db:
+            QMessageBox.warning(self, "Arcades", "Conecta la base de datos primero.")
+            return
+        self._import_pasted_list_for_system(self._ARCADE_SYSTEM_ID, "Arcades (MAME)")
+        self._refresh_arcades_roms()
+
     def _import_list_for_system(self, system_id: int, title: str) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self,
@@ -1985,18 +2008,72 @@ class MainWindow(QMainWindow):
         )
         if not path:
             return
-        added_count = 0
-        already_count = 0
-        not_found: List[str] = []
-        error: Optional[Exception] = None
         try:
             if Path(path).suffix.lower() == ".xml":
                 raw_names = self.parse_rom_list_from_xml(path)
             else:
                 raw_names = self.parse_rom_list_from_txt(self._read_text_file(path))
-            logging.info("Import list parsed %d tokens from %s", len(raw_names), path)
+            self._process_import_tokens(system_id, title, raw_names, path)
+        except Exception as exc:
+            logging.exception("Error importing ROM list %s", path)
+            QMessageBox.critical(self, title, f"No se pudo procesar el archivo: {exc}")
+
+    def _import_pasted_list_for_system(self, system_id: int, title: str) -> None:
+        """Procesa una lista escrita/pegada por el usuario como si fuera un TXT."""
+        text = self._ask_manual_list_text(title)
+        if text is None:
+            return
+        self._process_import_tokens(system_id, title, self.parse_rom_list_from_txt(text), "entrada manual")
+
+    def _ask_manual_list_text(self, title: str) -> Optional[str]:
+        """Muestra un cuadro de texto multilínea para pegar nombres de ROM."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"{title} · Pegar lista")
+        dialog.setMinimumWidth(560)
+        dialog.setMinimumHeight(380)
+
+        lay = QVBoxLayout(dialog)
+        hint = QLabel("Pega aquí tu lista de ROMs (una por línea o separadas por comas).")
+        hint.setWordWrap(True)
+        lay.addWidget(hint)
+
+        editor = QTextEdit(dialog)
+        editor.setPlaceholderText("Ejemplo:\nSuper Mario Bros\nContra\nMetal Slug 3")
+        lay.addWidget(editor)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
+        btn_search_roms = QPushButton("Buscar ROMs")
+        btn_search_roms.setDefault(True)
+        buttons.addButton(btn_search_roms, QDialogButtonBox.ButtonRole.AcceptRole)
+        lay.addWidget(buttons)
+
+        result: Dict[str, Optional[str]] = {"text": None}
+
+        def accept_with_text() -> None:
+            entered = editor.toPlainText().strip()
+            if not entered:
+                QMessageBox.warning(dialog, "Pegar lista", "Escribe o pega al menos un nombre de ROM.")
+                return
+            result["text"] = entered
+            dialog.accept()
+
+        btn_search_roms.clicked.connect(accept_with_text)
+        buttons.rejected.connect(dialog.reject)
+
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            return result["text"]
+        return None
+
+    def _process_import_tokens(self, system_id: int, title: str, raw_names: List[str], source: str) -> None:
+        """Resuelve y añade ROMs a la cesta desde una lista ya parseada."""
+        added_count = 0
+        already_count = 0
+        not_found: List[str] = []
+        error: Optional[Exception] = None
+        try:
+            logging.info("Import list parsed %d tokens from %s", len(raw_names), source)
             if not raw_names:
-                logging.warning("Import list parser returned 0 tokens for %s", path)
+                logging.warning("Import list parser returned 0 tokens for %s", source)
 
             unique_names: List[str] = []
             seen: set[str] = set()
@@ -2024,10 +2101,10 @@ class MainWindow(QMainWindow):
             added_count, already_count = self.add_roms_to_download_basket(found_ids)
         except Exception as exc:
             error = exc
-            logging.exception("Error importing ROM list %s", path)
+            logging.exception("Error importing ROM list from %s", source)
         finally:
             if error is not None:
-                QMessageBox.critical(self, title, f"No se pudo procesar el archivo: {error}")
+                QMessageBox.critical(self, title, f"No se pudo procesar la lista: {error}")
             else:
                 self._show_import_summary_dialog(title, added_count, not_found, already_count)
 
