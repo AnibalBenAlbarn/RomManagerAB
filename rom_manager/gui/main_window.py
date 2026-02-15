@@ -12,6 +12,7 @@ import logging
 import sqlite3
 import math
 import subprocess
+import shutil
 import xml.etree.ElementTree as ET
 from typing import Optional, List, Dict, Sequence
 
@@ -412,6 +413,10 @@ class MainWindow(QMainWindow):
         # Cargar configuración previa y restaurar estado
         self._load_config()
 
+        controller = self._ensure_console_controller()
+        if controller:
+            controller.start()
+
         # Mostrar advertencia sobre servidores si no está desactivada
         if not self.hide_server_warning:
             self._warn_servers_unavailable()
@@ -587,6 +592,31 @@ class MainWindow(QMainWindow):
             input_method = QGuiApplication.inputMethod()
             if input_method:
                 input_method.show()
+            if os.name == "nt":
+                keyboard_candidates = [
+                    ["osk.exe"],
+                    [
+                        str(
+                            Path(os.environ.get("PROGRAMFILES", "C:/Program Files"))
+                            / "Common Files"
+                            / "microsoft shared"
+                            / "ink"
+                            / "TabTip.exe"
+                        )
+                    ],
+                ]
+            else:
+                keyboard_candidates = [["onboard"]]
+
+            for command in keyboard_candidates:
+                executable = command[0]
+                if executable.endswith(".exe") and os.path.isabs(executable):
+                    if not os.path.exists(executable):
+                        continue
+                elif not shutil.which(executable):
+                    continue
+                subprocess.Popen(command)
+                return
         except Exception:
             logging.exception("No se pudo mostrar el teclado virtual")
 
@@ -624,10 +654,8 @@ class MainWindow(QMainWindow):
                     self.showNormal()
 
         controller = self._ensure_console_controller()
-        if self.console_mode_enabled and controller:
+        if controller:
             controller.start()
-        elif controller:
-            controller.stop()
 
         if save:
             self._save_config()
@@ -686,6 +714,14 @@ class MainWindow(QMainWindow):
     def trigger_console_toggle(self) -> None:
         self._apply_console_mode(not self.console_mode_enabled, save=True)
 
+    def trigger_console_open_options(self) -> None:
+        if hasattr(self, "tabs"):
+            self.tabs.setCurrentWidget(self.tab_settings)
+
+    def trigger_console_open_downloads(self) -> None:
+        if hasattr(self, "tabs"):
+            self.tabs.setCurrentWidget(self.tab_downloads)
+
     def trigger_console_focus_next(self) -> None:
         try:
             self.focusNextPrevChild(True)
@@ -697,6 +733,95 @@ class MainWindow(QMainWindow):
             self.focusNextPrevChild(False)
         except Exception:
             logging.exception("No se pudo mover el foco al control anterior")
+
+    def _move_selection(self, dx: int, dy: int) -> bool:
+        focus_widget = self.focusWidget()
+        table_like = isinstance(focus_widget, (QTableWidget, QTableView))
+        list_like = isinstance(focus_widget, QListWidget)
+
+        if table_like:
+            table = focus_widget
+            row_count = table.rowCount() if isinstance(table, QTableWidget) else table.model().rowCount()
+            col_count = table.columnCount() if isinstance(table, QTableWidget) else table.model().columnCount()
+            if row_count <= 0 or col_count <= 0:
+                return False
+            current_index = table.currentIndex()
+            row = current_index.row() if current_index.isValid() else 0
+            col = current_index.column() if current_index.isValid() else 0
+            new_row = min(max(row + dy, 0), row_count - 1)
+            new_col = min(max(col + dx, 0), col_count - 1)
+            if isinstance(table, QTableWidget):
+                table.setCurrentCell(new_row, new_col)
+                table.selectRow(new_row)
+            else:
+                model_index = table.model().index(new_row, new_col)
+                table.setCurrentIndex(model_index)
+                table.selectRow(new_row)
+            return True
+
+        if list_like:
+            lw = focus_widget
+            if lw.count() <= 0:
+                return False
+            current_row = lw.currentRow()
+            if current_row < 0:
+                current_row = 0
+            delta = dy if dy != 0 else dx
+            new_row = min(max(current_row + delta, 0), lw.count() - 1)
+            lw.setCurrentRow(new_row)
+            return True
+
+        if dy < 0 or dx < 0:
+            self.trigger_console_focus_prev()
+            return True
+        if dy > 0 or dx > 0:
+            self.trigger_console_focus_next()
+            return True
+        return False
+
+    def _trigger_default_for_focused_widget(self) -> bool:
+        focus_widget = self.focusWidget()
+        if isinstance(focus_widget, QTableWidget):
+            row = focus_widget.currentRow()
+            if row < 0:
+                return False
+            action_widget = focus_widget.cellWidget(row, focus_widget.columnCount() - 1)
+            if isinstance(action_widget, QPushButton):
+                action_widget.click()
+                return True
+            if action_widget is not None:
+                button = action_widget.findChild(QPushButton)
+                if button is not None:
+                    button.click()
+                    return True
+        if isinstance(focus_widget, QListWidget) and focus_widget is getattr(self, "list_emulator_extras", None):
+            self._download_selected_extra()
+            return True
+        return self._activate_focused_control()
+
+    def _close_active_dialog(self) -> bool:
+        dialog = QApplication.activeModalWidget()
+        if isinstance(dialog, QDialog):
+            dialog.reject()
+            return True
+        return False
+
+    def on_gamepad_button_pressed(self, button: int) -> None:
+        if button == 0:
+            self._trigger_default_for_focused_widget()
+            return
+        if button == 1:
+            if not self._close_active_dialog():
+                self._handle_console_back_action()
+
+    def on_gamepad_hat_moved(self, dx: int, dy: int) -> None:
+        self._move_selection(dx, -dy)
+
+    def on_gamepad_axis_moved(self, axis: int, value: float) -> None:
+        if axis == 0:
+            self._move_selection(-1 if value < 0 else 1, 0)
+        elif axis == 1:
+            self._move_selection(0, -1 if value < 0 else 1)
 
     def _handle_gamepad_navigation(self, key: int) -> bool:
         """
